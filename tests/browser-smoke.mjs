@@ -1,19 +1,23 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { MOCK_BOOTSTRAP_PAYLOAD } from "../public/model-contract.mjs";
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const publicRoot = path.join(projectRoot, "public");
+const standalonePreviewPath = path.join(projectRoot, "dist", "room-pilot-preview.html");
+const builtWorkerPath = path.join(projectRoot, "dist", "server", "index.js");
 const defaultChromePath = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
 const chromePath = process.env.CHROME_PATH || defaultChromePath;
 const commandTimeoutMs = 12_000;
 
 const sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
+
+const builtWorkerUrl = pathToFileURL(builtWorkerPath);
+builtWorkerUrl.searchParams.set("browser-smoke", `${process.pid}-${Date.now()}`);
+const { default: builtWorker } = await import(builtWorkerUrl.href);
 
 class PipeCdpClient {
   constructor(child) {
@@ -104,21 +108,13 @@ function makePreloadSource() {
   return String.raw`
     (() => {
       try { localStorage.clear(); } catch {}
-      globalThis.__roomPilotSmoke = { fetches: [], bootstraps: 0 };
-      const contract = ${JSON.stringify(MOCK_BOOTSTRAP_PAYLOAD)};
+      globalThis.__roomPilotSmoke = { fetches: [] };
       const originalFetch = typeof globalThis.fetch === "function"
         ? globalThis.fetch.bind(globalThis)
         : null;
       globalThis.fetch = async (input, init = {}) => {
         const raw = typeof input === "string" ? input : String(input?.url || input);
         globalThis.__roomPilotSmoke.fetches.push({ url: raw, method: init.method || "GET" });
-        if (raw === "/api/mock/bootstrap" || raw.endsWith("/api/mock/bootstrap")) {
-          globalThis.__roomPilotSmoke.bootstraps += 1;
-          return new Response(JSON.stringify(contract), {
-            status: 200,
-            headers: { "content-type": "application/json; charset=utf-8" }
-          });
-        }
         if (!originalFetch) throw new Error("Unexpected fetch in browser smoke: " + raw);
         return originalFetch(input, init);
       };
@@ -142,13 +138,9 @@ async function run() {
 
   const tempRoot = await mkdtemp(path.join(os.tmpdir(), "room-pilot-browser-smoke-"));
   const profileRoot = path.join(tempRoot, "chrome-profile");
-  const htmlPath = path.join(tempRoot, "index.html");
-  const indexSource = await readFile(path.join(publicRoot, "index.html"), "utf8");
-  const browserHtml = indexSource
-    .replace('href="/styles.css"', `href="${pathToFileURL(path.join(publicRoot, "styles.css")).href}"`)
-    .replace('src="/app.js"', `src="${pathToFileURL(path.join(publicRoot, "app.js")).href}"`)
-    .replaceAll('content="/og.png"', `content="${pathToFileURL(path.join(publicRoot, "og.png")).href}"`);
-  await writeFile(htmlPath, browserHtml, "utf8");
+  if (!existsSync(standalonePreviewPath)) {
+    throw new Error("Standalone preview is missing. Run npm run preview:file first.");
+  }
 
   const chrome = spawn(
     chromePath,
@@ -164,7 +156,6 @@ async function run() {
       "--no-default-browser-check",
       "--no-first-run",
       "--mute-audio",
-      "--allow-file-access-from-files",
       "--remote-debugging-pipe",
       `--user-data-dir=${profileRoot}`,
       "about:blank",
@@ -179,6 +170,8 @@ async function run() {
 
   const cdp = new PipeCdpClient(chrome);
   const runtimeErrors = [];
+  const buildRequestErrors = [];
+  const buildRequestTasks = new Set();
   let sessionId;
   let passed = 0;
   const results = [];
@@ -217,6 +210,34 @@ async function run() {
     assert.equal(clicked, true, `click target exists: ${selector}`);
   };
 
+  const fulfillBuiltRequest = async (message) => {
+    const { requestId, request } = message.params;
+    try {
+      const response = await builtWorker.fetch(
+        new Request(request.url, {
+          method: request.method,
+          headers: request.headers,
+        }),
+      );
+      const body = request.method === "HEAD"
+        ? ""
+        : Buffer.from(await response.arrayBuffer()).toString("base64");
+      await cdp.command(
+        "Fetch.fulfillRequest",
+        {
+          requestId,
+          responseCode: response.status,
+          responseHeaders: [...response.headers].map(([name, value]) => ({ name, value })),
+          body,
+        },
+        sessionId,
+      );
+    } catch (error) {
+      buildRequestErrors.push(String(error.stack || error));
+      await cdp.command("Fetch.failRequest", { requestId, errorReason: "Failed" }, sessionId).catch(() => {});
+    }
+  };
+
   const navigate = async (query = "", width = 390) => {
     runtimeErrors.length = 0;
     await cdp.command(
@@ -231,12 +252,31 @@ async function run() {
       },
       sessionId,
     );
-    const hasExplicitRole = new URLSearchParams(query).has("role");
-    const effectiveQuery = hasExplicitRole ? query : ["role=employee", query].filter(Boolean).join("&");
-    const url = `${pathToFileURL(htmlPath).href}?${effectiveQuery}`;
+    const url = `${pathToFileURL(standalonePreviewPath).href}${query ? `?${query}` : ""}`;
     const navigation = await cdp.command("Page.navigate", { url }, sessionId);
     if (navigation.errorText) throw new Error(`Page.navigate: ${navigation.errorText}`);
     await waitFor("document.readyState !== 'loading'", "document readiness");
+  };
+
+  const navigateBuiltWorker = async (query = "role=employee", width = 390) => {
+    runtimeErrors.length = 0;
+    buildRequestErrors.length = 0;
+    await cdp.command(
+      "Emulation.setDeviceMetricsOverride",
+      {
+        width,
+        height: 844,
+        deviceScaleFactor: 1,
+        mobile: true,
+        screenWidth: width,
+        screenHeight: 844,
+      },
+      sessionId,
+    );
+    const url = `https://room-pilot.test/${query ? `?${query}` : ""}`;
+    const navigation = await cdp.command("Page.navigate", { url }, sessionId);
+    if (navigation.errorText) throw new Error(`Page.navigate: ${navigation.errorText}`);
+    await waitFor("document.readyState !== 'loading'", "built worker document readiness");
   };
 
   const waitForApp = async () => {
@@ -295,15 +335,45 @@ async function run() {
     await cdp.command("Runtime.enable", {}, sessionId);
     await cdp.command("Log.enable", {}, sessionId);
     await cdp.command(
+      "Fetch.enable",
+      { patterns: [{ urlPattern: "https://room-pilot.test/*", requestStage: "Request" }] },
+      sessionId,
+    );
+    await cdp.command(
       "Page.addScriptToEvaluateOnNewDocument",
       { source: makePreloadSource() },
       sessionId,
     );
     cdp.onEvent((message) => {
       if (message.sessionId !== sessionId) return;
+      if (message.method === "Fetch.requestPaused") {
+        const task = fulfillBuiltRequest(message);
+        buildRequestTasks.add(task);
+        task.finally(() => buildRequestTasks.delete(task));
+        return;
+      }
       if (message.method === "Runtime.exceptionThrown") {
         runtimeErrors.push(message.params.exceptionDetails.exception?.description || message.params.exceptionDetails.text);
       }
+    });
+
+    await test("通常配備WorkerのES ModulesとAPI接続で初期表示できる", async () => {
+      await navigateBuiltWorker("role=employee", 390);
+      await waitForApp();
+      const state = await evaluate(`({
+        protocol: location.protocol,
+        host: location.host,
+        hasModuleEntry: Boolean(document.querySelector('script[type="module"][src="/app.js"]')),
+        bootstrapFetches: globalThis.__roomPilotSmoke.fetches.filter((item) => item.url.endsWith('/api/mock/bootstrap')).length,
+        title: document.querySelector('.page-title, .empty-title')?.textContent.trim()
+      })`);
+      assert.equal(state.protocol, "https:");
+      assert.equal(state.host, "room-pilot.test");
+      assert.equal(state.hasModuleEntry, true);
+      assert.equal(state.bootstrapFetches, 1);
+      assert.match(state.title, /今日の操縦席/u);
+      assert.deepEqual(runtimeErrors, [], `no runtime exceptions: ${runtimeErrors.join(" | ")}`);
+      assert.deepEqual(buildRequestErrors, [], `no Worker request errors: ${buildRequestErrors.join(" | ")}`);
     });
 
     await test("360/390/430pxで5画面に横スクロールが発生しない", async () => {
@@ -354,7 +424,7 @@ async function run() {
       assert.equal(gate.gateHidden, false);
       assert.match(gate.text, /社員専用/);
       assert.equal(await evaluate("Boolean(document.querySelector('.property-card'))"), false);
-      assert.equal(await evaluate("globalThis.__roomPilotSmoke.bootstraps"), 0, "権限拒否時は業務APIを呼ばない");
+      assert.equal(await evaluate("globalThis.__roomPilotSmoke.fetches.length"), 0, "権限拒否時は外部APIを呼ばない");
     });
 
     await test("顧客選択後にLike・Skip・Undoを保存／復元できる", async () => {
@@ -446,18 +516,17 @@ async function run() {
     await test("返信案は営業が明示送信するまで送信済みにならない", async () => {
       await navigate("smoke=reply-safety", 390);
       await waitForApp();
-      const bootstrapFetches = await evaluate("globalThis.__roomPilotSmoke.bootstraps");
-      assert.equal(bootstrapFetches, 1);
+      assert.equal(await evaluate("globalThis.__roomPilotSmoke.fetches.length"), 0, "単体プレビューは外部APIを呼ばない");
       await click('[data-action="open-reply"]');
       await waitFor("Boolean(document.querySelector('#reply-form'))", "reply draft sheet");
       let reply = await evaluate(`({
         text: document.querySelector('#modal-root').textContent,
         success: Boolean(document.querySelector('.success-safety')),
-        nonBootstrapFetches: globalThis.__roomPilotSmoke.fetches.filter((item) => !item.url.endsWith('/api/mock/bootstrap')).length
+        externalFetches: globalThis.__roomPilotSmoke.fetches.length
       })`);
       assert.match(reply.text, /AIは自動送信しません/);
       assert.equal(reply.success, false);
-      assert.equal(reply.nonBootstrapFetches, 0);
+      assert.equal(reply.externalFetches, 0);
 
       await click('#reply-form button[type="submit"]');
       await waitFor("document.querySelector('#recommend-heading + .recommend-card, .recommend-card')?.textContent.includes('返信済み')", "approved mock reply state");

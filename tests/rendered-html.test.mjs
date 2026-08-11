@@ -8,6 +8,8 @@ const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "
 const publicRoot = path.join(projectRoot, "public");
 const clientRoot = path.join(projectRoot, "dist", "client");
 const workerPath = path.join(projectRoot, "dist", "server", "index.js");
+const standalonePreviewPath = path.join(projectRoot, "dist", "room-pilot-preview.html");
+const standalonePreviewOgPath = path.join(projectRoot, "dist", "og.png");
 
 const workerUrl = pathToFileURL(workerPath);
 workerUrl.searchParams.set("test", `${process.pid}-${Date.now()}`);
@@ -72,6 +74,18 @@ test("公開ファイルを再帰的に dist\/client へ同一内容でコピー
     ]);
     assert.deepEqual(built, source, `${relativePath} のビルド結果が異なります`);
   }
+});
+
+test("LINE未接続の単体Webプレビューをサーバーなしで開ける", async () => {
+  const html = await readFile(standalonePreviewPath, "utf8");
+  assert.match(html, /<style>[\s\S]*\.bottom-nav/u);
+  assert.match(html, /<script type="module">[\s\S]*ROOM PILOT/u);
+  assert.doesNotMatch(html, /(?:src="\/app\.js"|href="\/styles\.css"|^\s*import\s)/mu);
+  assert.match(html, /window\.location\.protocol === "file:" \? "employee"/u);
+  assert.match(html, /transport: async \(\) => new Response\(JSON\.stringify\(MOCK_BOOTSTRAP_PAYLOAD\)/u);
+  for (const label of ["顧客", "物件", "今日", "内見", "案件"]) assert.match(html, new RegExp(label));
+  const ogBytes = await readFile(standalonePreviewOgPath);
+  assert.deepEqual([...ogBytes.slice(0, 8)], [137, 80, 78, 71, 13, 10, 26, 10]);
 });
 
 test("WorkerがOG画像も ASSETS なしで返す", async () => {

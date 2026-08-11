@@ -21,6 +21,16 @@ npm run test:browser
 
 `npm run build` は `public/` を `dist/client/` へ再帰的にコピーし、Cloudflare Worker互換の `dist/server/index.js` を生成します。
 
+### LINE連携前のUI確認
+
+ローカルサーバーを立ち上げずに確認する場合は、次を一度実行して `dist/room-pilot-preview.html` をブラウザで開いてください。ファイルで開いた場合だけ、社員モックとモックAPIを自動で使います。
+
+```bash
+npm run preview:file
+```
+
+通常のWebサーバーで確認する場合は `npm run dev` 後に `http://127.0.0.1:4173/?role=employee` を開きます。どちらもLINE認証、外部LINE送信、ITANDI BB通信は行いません。
+
 `npm test` はWorker/API/状態遷移のテストに加えて、依存ゼロのChrome CDP統合テストも呼び出します。Chromeを起動できない管理環境では統合テストだけが理由付きでSKIPされます。実機に近い確認では `BROWSER_SMOKE_STRICT=1 npm run test:browser` を実行すると、起動不可も失敗として扱えます。
 
 ## 権限表示の確認
