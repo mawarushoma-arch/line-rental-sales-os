@@ -831,6 +831,9 @@ import {
     done: { art: "done", tone: "success", label: "完了", copy: "すべて完了した" },
     hold: { art: "hold", tone: "neutral", label: "保留", copy: "一時的に保留している" },
     recheck: { art: "recheck", tone: "danger", label: "要再確認", copy: "確認・対応が必要です" },
+    // 内見の道中だけの姿。一覧表には無く、内見ステータスの凡例から切り出したもの。
+    moving: { art: "moving", tone: "warning", label: "移動前", copy: "これから移動" },
+    key: { art: "key", tone: "success", label: "鍵確認中", copy: "到着・鍵確認中" },
   };
 
   /** 顧客の12ステータスを、キャラクターの10状態へ寄せる。 */
@@ -1756,9 +1759,7 @@ import {
           ${mascot("hero", "hero-mascot")}
         </header>
         ${renderFreshnessWarning("空室と鍵は、出発前に管理会社へ再確認してください")}
-        ${renderStatusLegend("内見ステータス", ["progress", "urgent", "viewing", "waiting", "done"], {
-          progress: { label: "移動前", copy: "これから移動" },
-          urgent: { label: "鍵確認中", copy: "到着・鍵確認中" },
+        ${renderStatusLegend("内見ステータス", ["moving", "key", "viewing", "waiting", "done"], {
           viewing: { label: "案内中", copy: "内見案内中" },
           waiting: { label: "申込検討", copy: "申込を検討中" },
           done: { label: "完了", copy: "内見完了" },
