@@ -163,7 +163,7 @@ import {
   const STORAGE_KEY = `room-pilot:v${APP_VERSION}`;
   const VALID_TABS = ["customers", "properties", "today", "viewings", "cases"];
   const WIDGET_KEYS = ["priority", "recommendation", "deadlines", "timeline"];
-  const PROPERTY_FIELD_KEYS = ["listing", "ad", "rent", "management", "address", "viewing", "moveIn", "initialCost", "note"];
+  const PROPERTY_FIELD_KEYS = ["listing", "ad", "rent", "address", "layout", "management", "viewing", "moveIn", "initialCost", "note"];
   const REDUCED_MOTION = window.matchMedia("(prefers-reduced-motion: reduce)");
   const MOCK_NOW = Date.parse("2026-08-11T11:20:00+09:00");
   const UNDO_SECONDS = 8;
@@ -174,6 +174,21 @@ import {
     { id: "ad", label: "AD高い順" },
     { id: "new", label: "新着順" },
   ];
+  // マッチした条件は単語のままだと営業が顧客へ言い換える手間が残るので、説明文で持つ。
+  const MATCH_REASON_COPY = {
+    希望沿線: "希望の沿線・エリアに入っています",
+    日当たり: "日当たりの希望を満たしています",
+    予算内: "管理費込みで予算の範囲です",
+    "駅徒歩10分以内": "駅から徒歩10分以内です",
+    間取り: "希望の間取りタイプに合っています",
+    入居時期: "希望の入居時期に間に合います",
+    在宅スペース: "在宅ワーク用のスペースが取れます",
+    築浅: "築年数が希望より新しめです",
+    管理費込予算: "管理費を含めても予算内です",
+    初期費用: "初期費用が想定の範囲に収まります",
+    収納: "収納量の希望を満たしています",
+    内見可能日: "内見できる日が顧客の都合と合います",
+  };
   const DECK_FILTERS = [
     { id: "hideClosed", label: "募集終了を隠す", copy: "申込あり・募集終了のうち、募集終了だけを外します" },
     { id: "viewableToday", label: "本日内見できる物件だけ", copy: "内見可否が「本日可」のものに絞ります" },
@@ -420,6 +435,9 @@ import {
     rentYen: Math.round(seed[2] * 10_000),
     managementFeeYen: Math.round(seed[3] * 10_000),
     imageUrl: `https://images.unsplash.com/${seed[4]}?auto=format&fit=crop&w=900&q=82`,
+    // 本番はここへITANDIの物件資料の間取り図を入れる。カードは間取り図を優先し、
+    // 無い物件だけ室内写真へ落とす（モックは間取り図を持たないのでnull固定）。
+    floorPlanUrl: null,
     listingStatus: index === 13 ? "募集終了" : index % 6 === 0 ? "申込あり" : "募集中",
     listedAt: index % 3 === 0
       ? "2026-08-11T09:00:00+09:00"
@@ -573,7 +591,8 @@ import {
       { id: "ad", label: "AD", description: "社内限定の広告料情報" },
       { id: "rent", label: "賃料", description: "月額賃料" },
       { id: "management", label: "管理費", description: "共益費を含む月額" },
-      { id: "address", label: "場所", description: "駅・徒歩・間取り" },
+      { id: "address", label: "場所", description: "最寄駅と徒歩分数" },
+      { id: "layout", label: "間取り", description: "間取りタイプと専有面積" },
       { id: "viewing", label: "内見可否", description: "最新確認状態" },
       { id: "moveIn", label: "入居可能日", description: "入居開始の目安" },
       { id: "initialCost", label: "初期費用概算", description: "円単位モデルから表示" },
@@ -725,6 +744,36 @@ import {
   function effectiveStatusForProperty(customerId, propertyId) {
     const relation = candidateByIds(customerId, propertyId);
     return effectiveCandidateStatus(relation?.status, state.decisions[customerId], propertyId);
+  }
+
+  /** 保存＝しおりを挟む操作なので、好意を表すハートではなくブックマークで示す。 */
+  const SAVE_ICON =
+    '<svg class="icon-glyph" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M7 3.5h10a1.5 1.5 0 0 1 1.5 1.5v15.1a.9.9 0 0 1-1.38.76L12 17.4l-5.12 3.46A.9.9 0 0 1 5.5 20.1V5A1.5 1.5 0 0 1 7 3.5Z" fill="currentColor"/></svg>';
+
+  /** 本番は物件資料の間取り図を出す。無い物件だけ室内写真へ落とす。 */
+  function propertyVisual(property) {
+    if (property.floorPlanUrl) return { url: property.floorPlanUrl, kind: "is-floorplan", label: "間取り図" };
+    return { url: property.imageUrl, kind: "is-photo", label: "室内写真（間取り図は未提供）" };
+  }
+
+  /** 住所文字列は「駅徒歩・間取り」で持っているので、表示側で2項目へ割る。 */
+  function propertyPlaceParts(property) {
+    const [walk, layout] = String(property.address).split("・");
+    return [walk?.trim() || "所在 未確認", layout?.trim() || "間取り 未確認"];
+  }
+
+  function listingTone(listingStatus) {
+    if (listingStatus === "募集終了") return "urgent";
+    if (listingStatus === "申込あり") return "warning";
+    return "success";
+  }
+
+  /** ADは率だけだと手取りが見えないので、賃料から換算した金額と併記する。 */
+  function adBreakdown(property) {
+    const percent = adValue(property);
+    if (!percent) return { percent: 0, amount: 0, label: "AD 未確認" };
+    const amount = Math.round((property.rentYen * percent) / 100);
+    return { percent, amount, label: `${amount.toLocaleString("ja-JP")}円 / ${percent}%` };
   }
 
   function adValue(property) {
@@ -1182,13 +1231,16 @@ import {
       </section>`;
   }
 
-  /** 保存したカードが画面下へ積み上がっていく様子を出す（束をタップで保存済み一覧へ）。 */
+  /**
+   * 保存したカードが画面下へ積み上がっていく様子を出す。
+   * 件数ラベルは重ねず（束の見え方を邪魔するため）、束そのものを一覧への入口にする。
+   */
   function renderDeckPile(likedProperties, selected) {
     const slabs = [...likedProperties].reverse().slice(0, 3);
     return `
       <div class="deck-pile ${slabs.length ? "" : "is-empty"}" data-deck-tray>
-        ${slabs.map((property, index) => `<span class="pile-slab" style="--i:${index}" aria-hidden="true"><img src="${escapeHTML(property.imageUrl)}" alt="" loading="eager" referrerpolicy="no-referrer" draggable="false" /></span>`).join("")}
-        <button class="pile-pill" type="button" data-action="review-candidates" data-id="${selected.id}"><span aria-hidden="true">↑</span> 保存済み · ${likedProperties.length}</button>
+        ${slabs.map((property, index) => `<span class="pile-slab" style="--i:${index}" aria-hidden="true"><img src="${escapeHTML(propertyVisual(property).url)}" alt="" loading="eager" referrerpolicy="no-referrer" draggable="false" /></span>`).join("")}
+        <button class="pile-open" type="button" data-action="review-candidates" data-id="${selected.id}" aria-label="保存済み${likedProperties.length}件を確認する"></button>
       </div>`;
   }
 
@@ -1237,12 +1289,14 @@ import {
   }
 
   function renderPropertyField(field, property, index) {
+    const [walk, layout] = propertyPlaceParts(property);
     const values = {
       listing: ["募集状況", property.listingStatus],
-      ad: ["AD・社内限定", property.internal.ad],
+      ad: ["AD・社内限定", adBreakdown(property).label],
       rent: ["賃料", yen(property.rentYen)],
       management: ["管理費／共益費", yen(property.managementFeeYen)],
-      address: ["場所", property.address],
+      address: ["場所", walk],
+      layout: ["間取り", layout],
       viewing: ["内見可否", property.viewingAvailable],
       moveIn: ["入居可能日", property.moveInAt],
       initialCost: ["初期費用概算", yen(property.initialCostYen)],
@@ -1250,28 +1304,30 @@ import {
     };
     const value = values[field];
     if (!value) return "";
-    const wide = field === "address" || field === "note";
-    const statusClass = field === "listing" && property.listingStatus === "募集終了" ? " danger-text" : "";
-    return `<div class="property-data${wide ? " wide" : ""}${index === 0 ? " emphasized" : ""}"><span class="detail-label">${value[0]}${index === 0 ? " · 強調" : ""}</span><strong class="detail-value${statusClass}">${escapeHTML(value[1])}</strong></div>`;
+    const wide = field === "note" || field === "initialCost";
+    const half = field === "address" || field === "layout";
+    const toneClass = field === "listing" ? ` tone-${listingTone(property.listingStatus)}` : "";
+    return `<div class="property-data${wide ? " wide" : ""}${half ? " half" : ""}${index === 0 ? " emphasized" : ""}${toneClass}"><span class="detail-label">${value[0]}${index === 0 ? " · 強調" : ""}</span><strong class="detail-value">${escapeHTML(value[1])}</strong></div>`;
   }
 
   /**
-   * カード表面は要点だけに絞る（物件名・賃料・間取り・募集状況・駅徒歩・一致率・鮮度）。
+   * カード表面は要点だけに絞る（物件名・賃料・間取り・募集状況・駅徒歩・マッチ度・鮮度）。
    * 賃料以外の金額、AD、備考、合う理由は詳細シートへ送り、面を写真で使い切る。
    */
   function renderPropertyCard(property, slot, customerId) {
     const isCurrent = slot === "current";
     const candidate = candidateByIds(customerId, property.id);
     const stale = propertyIsStale(property);
-    const [walk, layout] = String(property.address).split("・");
-    const statusTone = property.listingStatus === "募集終了" ? "urgent" : property.listingStatus === "申込あり" ? "warning" : "success";
+    const [walk, layout] = propertyPlaceParts(property);
+    const statusTone = listingTone(property.listingStatus);
+    const visual = propertyVisual(property);
     return `
       <article class="property-card deck-card ${slot} ${isCurrent ? "top-card" : ""}" data-property-card data-property-slot="${slot}" data-property-id="${property.id}" data-listing-status="${property.listingStatus}" ${isCurrent ? 'aria-label="現在の候補物件"' : 'aria-hidden="true"'}>
-        <img class="card-photo" src="${escapeHTML(property.imageUrl)}" alt="${escapeHTML(property.name)}の室内写真" loading="${isCurrent ? "eager" : "lazy"}" referrerpolicy="no-referrer" draggable="false" />
+        <img class="card-photo ${visual.kind}" src="${escapeHTML(visual.url)}" alt="${escapeHTML(property.name)}の${visual.label}" loading="${isCurrent ? "eager" : "lazy"}" referrerpolicy="no-referrer" draggable="false" />
         <span class="card-scrim" aria-hidden="true"></span>
         <span class="swipe-badge save" aria-hidden="true">保存</span>
         <div class="card-top">
-          <span class="match-badge">一致率 ${clampPercent(candidate?.matchScore)}%</span>
+          <span class="match-badge">マッチ度 ${clampPercent(candidate?.matchScore)}%</span>
           <span class="freshness-chip ${stale ? "stale" : ""}">${stale ? "⚠ " : ""}更新 ${escapeHTML(relativeSourceTime(property.sourceUpdatedAt))}</span>
         </div>
         <div class="card-foot">
@@ -1283,7 +1339,7 @@ import {
         ${isCurrent ? `<button class="card-open" type="button" data-action="open-property-detail" data-id="${property.id}" aria-label="${escapeHTML(property.name)}の詳細を開く"><span class="card-open-label">タップで詳細</span></button>
         <div class="card-decide">
           <button class="card-action skip" type="button" data-action="property-skip" data-id="${property.id}" aria-label="この物件をSkipする"><span aria-hidden="true">✕</span></button>
-          <button class="card-action save" type="button" data-action="property-like" data-id="${property.id}" ${property.listingStatus === "募集終了" ? "disabled" : ""} aria-label="${property.listingStatus === "募集終了" ? "募集終了のため保存できません" : "この物件を候補へ保存する"}"><span aria-hidden="true">${property.listingStatus === "募集終了" ? "—" : "♡"}</span></button>
+          <button class="card-action save" type="button" data-action="property-like" data-id="${property.id}" ${property.listingStatus === "募集終了" ? "disabled" : ""} aria-label="${property.listingStatus === "募集終了" ? "募集終了のため保存できません" : "この物件を候補へ保存する"}">${property.listingStatus === "募集終了" ? '<span aria-hidden="true">—</span>' : SAVE_ICON}</button>
         </div>` : ""}
       </article>`;
   }
@@ -1321,7 +1377,15 @@ import {
         <div class="property-data-grid">
           ${PROPERTY_FIELD_KEYS.map((field, fieldIndex) => renderPropertyField(field, property, fieldIndex + 1)).join("")}
         </div>
-        <div class="match-reason">合う理由：${(candidate?.matchReasons || []).map(escapeHTML).join("・") || "未算出"}</div>
+        <section class="match-block" aria-label="マッチ度">
+          <div class="match-head">
+            <span class="match-score">${clampPercent(candidate?.matchScore)}<span class="match-unit">%</span></span>
+            <div><p class="match-title">マッチ度</p><p class="match-sub">${escapeHTML(customer.name)}さんの希望条件との一致</p></div>
+          </div>
+          ${(candidate?.matchReasons || []).length
+            ? `<ul class="match-list">${candidate.matchReasons.map((reason) => `<li>${escapeHTML(MATCH_REASON_COPY[reason] || `${reason}が希望に合っています`)}</li>`).join("")}</ul>`
+            : '<p class="small-copy">一致した条件はまだ算出できていません。</p>'}
+        </section>
         <section class="detail-section" aria-labelledby="internal-title">
           <div class="detail-section-head"><h3 id="internal-title" class="detail-section-title">社内限定</h3><span class="mini-badge">顧客返信には含めません</span></div>
           <p class="small-copy">鍵：${escapeHTML(property.internal.keyInfo)}</p>
@@ -1462,7 +1526,7 @@ import {
       <div class="sheet-content">
         <section class="detail-section" aria-labelledby="condition-section-title"><div class="detail-section-head"><h3 id="condition-section-title" class="detail-section-title">AI条件整理</h3><span class="mini-badge">確定 / 推定 / 未確認</span></div><ul class="condition-list">${condition.items.map((item) => `<li class="condition-item"><span class="condition-dot ${item.status}" aria-hidden="true"></span><div><p class="condition-title">${escapeHTML(item.label)} <span class="tag ${item.status === "confirmed" ? "success" : item.status === "inferred" ? "warning" : "neutral"}">${statusLabels[item.status]}</span></p><p class="condition-copy">${escapeHTML(item.value)}</p></div></li>`).join("")}</ul></section>
         <section class="detail-section" aria-labelledby="line-summary-title"><div class="detail-section-head"><h3 id="line-summary-title" class="detail-section-title">LINE会話と要約</h3><span class="mini-badge">会話から要約</span></div><blockquote class="summary-quote">${escapeHTML(customer.lineSummary)}</blockquote><ol class="conversation-list"><li><time>09:42</time><span>顧客</span><p>ありがとうございます。日当たりも重視したいです。</p></li><li><time>09:48</time><span>営業</span><p>承知しました。仕事スペースも含めて候補を整理します。</p></li><li><time>10:05</time><span>顧客</span><p>週末の午前なら内見できます。</p></li></ol></section>
-        <section class="detail-section" aria-labelledby="liked-title"><div class="detail-section-head"><h3 id="liked-title" class="detail-section-title">Like物件</h3><span class="count-badge">${liked.length}</span></div>${liked.length ? `<ul class="liked-list">${liked.slice(0, 3).map((property) => { const candidate = candidateByIds(customer.id, property.id); return `<li class="liked-item"><span class="liked-thumb"><img src="${escapeHTML(property.imageUrl)}" alt="" loading="lazy" referrerpolicy="no-referrer" /></span><div class="person-main"><p class="person-name">${escapeHTML(property.name)}</p><p class="person-meta">${yen(property.rentYen)} · 一致率 ${clampPercent(candidate?.matchScore)}%</p></div></li>`; }).join("")}</ul>` : '<p class="small-copy">まだLikeした物件はありません。</p>'}</section>
+        <section class="detail-section" aria-labelledby="liked-title"><div class="detail-section-head"><h3 id="liked-title" class="detail-section-title">Like物件</h3><span class="count-badge">${liked.length}</span></div>${liked.length ? `<ul class="liked-list">${liked.slice(0, 3).map((property) => { const candidate = candidateByIds(customer.id, property.id); return `<li class="liked-item"><span class="liked-thumb"><img src="${escapeHTML(property.imageUrl)}" alt="" loading="lazy" referrerpolicy="no-referrer" /></span><div class="person-main"><p class="person-name">${escapeHTML(property.name)}</p><p class="person-meta">${yen(property.rentYen)} · マッチ度 ${clampPercent(candidate?.matchScore)}%</p></div></li>`; }).join("")}</ul>` : '<p class="small-copy">まだLikeした物件はありません。</p>'}</section>
         <section class="detail-section" aria-labelledby="progress-title"><div class="detail-section-head"><h3 id="progress-title" class="detail-section-title">進捗</h3><span class="stage-pill">${escapeHTML(customer.status)}</span></div><div class="progress-track" aria-label="進捗 ${clampPercent(customer.progress)}%"><div class="progress-value" style="width:${clampPercent(customer.progress)}%"></div></div><div class="progress-labels"><span>初回対応</span><span>物件提案</span><span>内見</span><span>申込</span><span>契約</span></div></section>
       </div>
       <footer class="sheet-footer">

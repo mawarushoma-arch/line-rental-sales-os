@@ -1137,8 +1137,12 @@ body.deck-mode .bottom-nav {
 }
 
 .deck-chip.round {
-  width: 36px;
+  display: grid;
+  width: 44px;
+  min-height: 44px;
   padding: 0;
+  place-items: center;
+  font-size: 18px;
 }
 
 .chip-dot {
@@ -1192,28 +1196,13 @@ body.deck-mode .bottom-nav {
   content: "";
 }
 
-.pile-pill {
+.pile-open {
   position: absolute;
   z-index: 6;
-  bottom: 16px;
-  left: 50%;
-  min-height: 44px;
-  padding: 0 22px;
+  inset: 0;
   border: 0;
-  border-radius: 999px;
-  background: rgba(20, 21, 24, 0.82);
-  color: #f7f7f5;
-  font-size: 13px;
-  font-weight: 820;
+  background: transparent;
   cursor: pointer;
-  backdrop-filter: blur(10px);
-  transform: translateX(-50%);
-}
-
-.deck-tray.is-target .pile-pill,
-.deck-pile.is-target .pile-pill {
-  background: var(--accent);
-  color: var(--accent-text);
 }
 
 .deck-pile.is-target .pile-slab {
@@ -1221,14 +1210,19 @@ body.deck-mode .bottom-nav {
 }
 
 /* カード上の判断ボタン。トレイに行を足さずに済ませ、その分カードを大きく取る */
-/* 右下は移動メニュー（.deck-nav）が使うので、判断ボタンは左下へ置いて衝突を避ける */
+/* 親指の届く右下を判断ボタンに使う。移動メニューはカードの外（束の上）にある */
 .card-decide {
   position: absolute;
   z-index: 4;
+  right: 16px;
   bottom: 16px;
-  left: 16px;
   display: flex;
   gap: 10px;
+}
+
+.icon-glyph {
+  width: 20px;
+  height: 20px;
 }
 
 .card-action {
@@ -1589,8 +1583,8 @@ body.deck-mode .bottom-nav {
 
 .card-open-label {
   position: absolute;
-  right: 16px;
-  bottom: 16px;
+  bottom: 26px;
+  left: 16px;
   padding: 5px 11px;
   border-radius: 999px;
   background: rgba(255, 255, 255, 0.17);
@@ -1638,14 +1632,24 @@ body.deck-mode .bottom-nav {
 }
 
 .property-data-grid {
+  /* 6分割にして、通常タイルは3列相当・場所と間取りは2列相当で1行に並べる */
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(6, 1fr);
   gap: 8px;
   margin-top: 13px;
 }
 
+.property-data {
+  grid-column: span 2;
+}
+
 .property-data.wide {
   grid-column: 1 / -1;
+}
+
+/* 場所と間取りは並べて見比べたいので、半々で1行に置く */
+.property-data.half {
+  grid-column: span 3;
 }
 
 .property-data.wide .detail-value {
@@ -1666,10 +1670,14 @@ body.deck-mode .bottom-nav {
 }
 
 .detail-label {
-  display: block;
-  color: var(--muted);
+  display: inline;
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+  /* 項目名は蛍光ペンで線を引いたように見せ、値との段差をはっきりさせる */
+  background-image: linear-gradient(transparent 62%, color-mix(in srgb, var(--accent) 42%, transparent) 62%);
+  color: var(--muted-strong);
   font-size: 11px;
-  font-weight: 720;
+  font-weight: 800;
 }
 
 .detail-value {
@@ -1682,14 +1690,99 @@ body.deck-mode .bottom-nav {
   white-space: nowrap;
 }
 
-.match-reason {
-  margin-top: 12px;
-  padding: 10px 12px;
-  border-radius: 14px;
+/* 募集状況は文字だけだと見落とすので、タイルごと色で分ける */
+.property-data.tone-success {
+  border-color: color-mix(in srgb, var(--success) 34%, transparent);
   background: var(--success-soft);
+}
+
+.property-data.tone-success .detail-value {
   color: var(--success);
+}
+
+.property-data.tone-warning {
+  border-color: color-mix(in srgb, var(--warning) 40%, transparent);
+  background: var(--warning-soft);
+}
+
+.property-data.tone-warning .detail-value {
+  color: var(--warning);
+}
+
+.property-data.tone-urgent {
+  border-color: color-mix(in srgb, var(--danger) 40%, transparent);
+  background: var(--danger-soft);
+}
+
+.property-data.tone-urgent .detail-value {
+  color: var(--danger);
+}
+
+.match-block {
+  margin-top: 14px;
+  padding: 14px;
+  border: 1px solid color-mix(in srgb, var(--success) 26%, transparent);
+  border-radius: 18px;
+  background: var(--success-soft);
+}
+
+.match-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.match-score {
+  display: flex;
+  align-items: baseline;
+  color: var(--success);
+  font-size: 30px;
+  font-weight: 880;
+  letter-spacing: -0.04em;
+  line-height: 1;
+}
+
+.match-unit {
+  margin-left: 1px;
+  font-size: 14px;
+  font-weight: 820;
+}
+
+.match-title {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 850;
+}
+
+.match-sub {
+  margin: 2px 0 0;
+  color: var(--muted);
   font-size: 11px;
+}
+
+.match-list {
+  margin: 12px 0 0;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+  list-style: none;
+}
+
+.match-list li {
+  position: relative;
+  padding-left: 20px;
+  font-size: 12px;
   font-weight: 700;
+  line-height: 1.5;
+}
+
+.match-list li::before {
+  position: absolute;
+  top: 0;
+  left: 2px;
+  color: var(--success);
+  content: "✓";
+  font-weight: 900;
 }
 
 .empty-state {
