@@ -705,6 +705,7 @@ import {
   let state = loadState();
   const runtime = {
     customerFilter: "all",
+    customerOwner: "all",
     customerSearch: "",
     viewingRange: "today",
     completedTodayActions: new Set(),
@@ -812,6 +813,80 @@ import {
     const source = MASCOTS[key];
     if (!source || !runtime.mascotsReady) return "";
     return `<img class="mascot ${className}" src="${escapeHTML(source)}" alt="" draggable="false" />`;
+  }
+
+  /**
+   * ステータスは「色のピル」だけでなく「キャラクターの姿」でも示す。
+   * 一覧を流し見しているときに、読まずに状態が分かることを狙う。
+   * tone は状態色（todo=グレー / urgent=赤 / progress=アンバー / waiting=青 / done=緑）。
+   */
+  const STATUS_ART = {
+    todo: { art: "todo", tone: "neutral", label: "未着手", copy: "まだ始めていない" },
+    urgent: { art: "urgent", tone: "danger", label: "要対応", copy: "早めの対応が必要" },
+    progress: { art: "progress", tone: "warning", label: "進行中", copy: "対応を進めている" },
+    waiting: { art: "waiting", tone: "info", label: "確認待ち", copy: "確認・返答待ち" },
+    proposing: { art: "proposing", tone: "info", label: "提案中", copy: "提案を行っている" },
+    viewing: { art: "viewing", tone: "info", label: "内見中", copy: "内見を案内している" },
+    applying: { art: "applying", tone: "warning", label: "申込準備", copy: "申込に向けて準備中" },
+    done: { art: "done", tone: "success", label: "完了", copy: "すべて完了した" },
+    hold: { art: "hold", tone: "neutral", label: "保留", copy: "一時的に保留している" },
+    recheck: { art: "recheck", tone: "danger", label: "要再確認", copy: "確認・対応が必要です" },
+  };
+
+  /** 顧客の12ステータスを、キャラクターの10状態へ寄せる。 */
+  const CUSTOMER_STATUS_ART = {
+    新規: "todo",
+    条件確認中: "urgent",
+    物件提案中: "proposing",
+    内見調整中: "viewing",
+    内見待ち: "waiting",
+    書類待ち: "applying",
+    申込済: "applying",
+    審査中: "waiting",
+    契約準備: "applying",
+    契約済: "done",
+    保留: "hold",
+    失注: "recheck",
+  };
+
+  const CASE_STAGE_ART = {
+    追客中: "proposing",
+    内見調整: "viewing",
+    申込準備: "applying",
+    審査中: "waiting",
+    契約準備: "applying",
+    契約済: "done",
+  };
+
+  const VIEWING_STATUS_ART = { 確定: "progress", 確認待ち: "waiting", 仮押さえ: "hold" };
+
+  function statusArt(key, className = "status-art") {
+    const entry = STATUS_ART[key];
+    if (!entry || !runtime.mascotsReady) return "";
+    return `<img class="mascot ${className}" src="/mascot/status/${entry.art}.png" alt="" draggable="false" />`;
+  }
+
+  /** 画面上部に置く凡例。どのキャラがどの状態かを、その画面の言葉で説明する。 */
+  function renderStatusLegend(title, keys, labels = {}) {
+    if (!runtime.mascotsReady) return "";
+    return `
+      <section class="card legend-card" aria-label="${escapeHTML(title)}">
+        <p class="legend-title">${escapeHTML(title)}</p>
+        <ol class="legend-list">
+          ${keys.map((key, index) => {
+            const entry = STATUS_ART[key];
+            const override = labels[key] || {};
+            return `<li class="legend-item">
+              ${index > 0 ? '<span class="legend-arrow" aria-hidden="true">›</span>' : ""}
+              <span class="legend-body">
+                ${statusArt(key, "legend-art")}
+                <span class="status-pill ${entry.tone}">${escapeHTML(override.label || entry.label)}</span>
+                <span class="legend-copy">${escapeHTML(override.copy || entry.copy)}</span>
+              </span>
+            </li>`;
+          }).join("")}
+        </ol>
+      </section>`;
   }
 
   /** 保存＝しおりを挟む操作なので、好意を表すハートではなくブックマークで示す。 */
@@ -1071,12 +1146,12 @@ import {
           </div>
           <div class="card recommend-card">
             <div class="recommend-top">
-              ${mascot("idea", "recommend-mascot")}
+              <span class="recommend-mark" aria-hidden="true">${replySent ? "✓" : "↗"}</span>
               <div class="recommend-copy">
                 <h3 class="card-title">${replySent ? "石井さんへ返信済み" : "石井さんへの返信案を確認"}</h3>
                 <p class="card-copy">${replySent ? "営業確認後の本文をモック送信記録へ保存しました。" : "初回返信を先に終えると、希望条件の回収と候補提案が今日中につながります。"}</p>
               </div>
-              <span class="recommend-mark" aria-hidden="true">${replySent ? "✓" : "↗"}</span>
+              ${mascot("idea", "recommend-mascot")}
             </div>
             <button class="primary-button wide-button" type="button" data-action="open-reply">${replySent ? "送信記録を確認" : "返信案を確認する"}</button>
           </div>
@@ -1095,6 +1170,7 @@ import {
                 const soon = day === "今日";
                 return `<li><button class="deadline-row" type="button" data-action="open-customer" data-id="${customer.id}">
                   <span class="deadline-date ${soon ? "is-today" : "is-later"}"><span class="deadline-day">${escapeHTML(day)}</span><span class="deadline-time">${escapeHTML(time || "")}</span></span>
+                  <span class="deadline-bar ${soon ? "is-today" : "is-later"}" aria-hidden="true"></span>
                   <div class="deadline-main"><p class="deadline-title">${escapeHTML(item.title)}</p><p class="deadline-sub">${escapeHTML(customer.name)} · ${escapeHTML(item.action)}</p></div>
                   <span class="chevron" aria-hidden="true">›</span>
                 </button></li>`;
@@ -1127,10 +1203,11 @@ import {
           ${mascot("hero", "hero-mascot")}
         </header>
         ${renderFreshnessWarning("空室・鍵・金額は、提案と内見の前に再確認してください")}
+        ${renderStatusLegend("タスクの進行ステータス", ["todo", "urgent", "progress", "waiting", "done"])}
 
         <div class="metric-grid" aria-label="本日の概要">
           <div class="metric-card">
-            ${mascot("checklist", "metric-mascot")}
+            <span class="metric-icon" aria-hidden="true">☑</span>
             <div class="metric-body">
               <p class="metric-label">優先アクション</p>
               <p class="metric-value">${priorities.length}<span class="metric-unit">件</span></p>
@@ -1138,7 +1215,7 @@ import {
             </div>
           </div>
           <div class="metric-card">
-            ${mascot("house", "metric-mascot")}
+            <span class="metric-icon" aria-hidden="true">⌂</span>
             <div class="metric-body">
               <p class="metric-label">本日の内見</p>
               <p class="metric-value">2<span class="metric-unit">組</span></p>
@@ -1175,7 +1252,7 @@ import {
           <p class="action-sub">${escapeHTML(customer.name)} · ${escapeHTML(customer.status)}</p>
           <div class="action-tags"><span class="status-pill ${item.urgency}">${escapeHTML(priorityDueLabel(item))}</span><span class="status-pill neutral">${escapeHTML(item.action)}</span></div>
         </div>
-        ${mascot(item.id === "ta2" ? "line" : index === 2 ? "doc" : "search", "action-mascot")}
+        ${statusArt(item.urgency === "urgent" ? "urgent" : done ? "done" : "progress", "action-mascot")}
         <button class="action-button" type="button" data-action="${processAction}" data-id="${processId}" ${lockedDone ? "disabled" : ""} aria-label="${escapeHTML(controlLabel)}">${lockedDone ? "✓" : item.id === "ta2" || item.id === "ta6" ? "→" : done ? "↶" : "✓"}</button>
       </li>`;
   }
@@ -1187,10 +1264,18 @@ import {
         <header class="hero">
           <div class="hero-copy">
             <p class="eyebrow">CUSTOMERS</p>
-            <h1 id="customers-title" class="hero-title">顧客</h1>
+            <h1 id="customers-title" class="hero-title">顧客一覧</h1>
+            <p class="hero-lead">お客様の進捗をキャラクターで一目で確認できます</p>
           </div>
           ${mascot("hero", "hero-mascot")}
         </header>
+        ${renderStatusLegend("ステータスの見方", ["todo", "proposing", "viewing", "applying", "done"], {
+          todo: { label: "未割当", copy: "担当がまだ決まっていない" },
+          proposing: { label: "追客中", copy: "物件を提案している" },
+          viewing: { label: "内見調整", copy: "内見の日程を調整中" },
+          applying: { label: "書類待ち", copy: "申込書類を待っている" },
+          done: { label: "契約済", copy: "契約が完了した" },
+        })}
 
         <section class="card inbox-card" aria-labelledby="inbox-title">
           <div class="inbox-head">
@@ -1204,10 +1289,13 @@ import {
           </div>
         </section>
 
-        <div class="search-wrap">
-          <span class="search-icon" aria-hidden="true">⌕</span>
-          <label class="sr-only" for="customer-search">顧客を検索</label>
-          <input id="customer-search" class="search-input" type="search" placeholder="名前・条件・流入元で検索" autocomplete="off" value="${escapeHTML(runtime.customerSearch)}" />
+        <div class="search-line">
+          <div class="search-wrap">
+            <span class="search-icon" aria-hidden="true">⌕</span>
+            <label class="sr-only" for="customer-search">顧客を検索</label>
+            <input id="customer-search" class="search-input" type="search" placeholder="名前・条件・流入元で検索" autocomplete="off" value="${escapeHTML(runtime.customerSearch)}" />
+          </div>
+          <button class="ghost-button filter-button" type="button" data-action="open-customer-filters"><span aria-hidden="true">⚗</span>絞り込み</button>
         </div>
         <div class="filter-row" aria-label="顧客フィルター">
           ${[
@@ -1215,7 +1303,7 @@ import {
             ["urgent", "要対応"],
             ["unassigned", "未割当"],
             ["followup", "追客中"],
-          ].map(([id, label]) => `<button class="filter-chip" type="button" data-action="customer-filter" data-filter="${id}" aria-pressed="${runtime.customerFilter === id}">${label}</button>`).join("")}
+          ].map(([id, label]) => `<button class="filter-chip" type="button" data-action="customer-filter" data-filter="${id}" aria-pressed="${runtime.customerFilter === id}">${label}<span class="chip-count">${customerFilterCount(id)}</span></button>`).join("")}
         </div>
 
         <section class="section" aria-labelledby="customer-list-heading">
@@ -1248,7 +1336,7 @@ import {
               <span class="meta-item"><span class="meta-icon" aria-hidden="true">◔</span>${escapeHTML(customer.unassigned ? "未割当" : customer.assignedTo)}</span>
             </span>
           </span>
-          ${mascot("search", "customer-mascot")}
+          ${statusArt(CUSTOMER_STATUS_ART[customer.status] || "todo", "customer-mascot")}
         </button>
         ${action ? `<button class="customer-action" type="button" data-action="open-talk" data-id="${customer.id}">
           <span class="meta-icon" aria-hidden="true">✉</span>
@@ -1258,17 +1346,50 @@ import {
       </article>`;
   }
 
+  function matchesCustomerOwner(customer) {
+    if (runtime.customerOwner === "all") return true;
+    if (runtime.customerOwner === "unassigned") return customer.unassigned;
+    return !customer.unassigned && customer.assignedTo === runtime.customerOwner;
+  }
+
+  function matchesCustomerFilter(customer, filter) {
+    if (filter === "all") return true;
+    if (filter === "urgent") return customer.priority === "urgent";
+    if (filter === "unassigned") return customer.unassigned;
+    if (filter === "followup") return customer.stage === "追客中";
+    return true;
+  }
+
+  /** チップに件数を出す。押す前に「そこに何件あるか」が見える。 */
+  function customerFilterCount(filter) {
+    return Customer.filter((customer) => matchesCustomerFilter(customer, filter) && matchesCustomerOwner(customer)).length;
+  }
+
+  function openCustomerFilters() {
+    const owners = [["all", "すべての担当"], ["佐藤", "佐藤"], ["田中", "田中"], ["高橋", "高橋"], ["unassigned", "未割当"]];
+    const content = `
+      <header class="sheet-header"><div><p class="eyebrow">FILTER</p><h2 id="customer-filter-title" class="sheet-title">絞り込み</h2><p class="sheet-subtitle">担当者で一覧を絞ります</p></div><button class="icon-button" type="button" data-action="close-modal" aria-label="閉じる">×</button></header>
+      <div class="sheet-content">
+        <div class="checkbox-list">
+          ${owners.map(([id, label]) => `<button class="filter-toggle ${runtime.customerOwner === id ? "on" : ""}" type="button" data-action="customer-owner" data-owner="${id}" aria-pressed="${runtime.customerOwner === id}">
+            <span class="filter-check" aria-hidden="true">${runtime.customerOwner === id ? "✓" : ""}</span>
+            <span class="filter-main"><span class="filter-label">${escapeHTML(label)}</span><span class="filter-copy">${Customer.filter((customer) => id === "all" || (id === "unassigned" ? customer.unassigned : !customer.unassigned && customer.assignedTo === id)).length}名</span></span>
+          </button>`).join("")}
+        </div>
+      </div>
+      <footer class="sheet-footer">
+        <button class="ghost-button" type="button" data-action="customer-owner" data-owner="all">すべて外す</button>
+        <button class="primary-button" type="button" data-action="close-modal">この条件で見る</button>
+      </footer>`;
+    openSheet(content, "customer-filter-title");
+  }
+
   function getFilteredCustomers() {
     const query = runtime.customerSearch.trim().toLocaleLowerCase("ja");
     return Customer.filter((customer) => {
       const matchesSearch = !query || [customer.name, customer.kana, customer.source, customer.status, customer.stage, customer.lineSummary]
         .some((value) => value.toLocaleLowerCase("ja").includes(query));
-      const matchesFilter =
-        runtime.customerFilter === "all" ||
-        (runtime.customerFilter === "urgent" && customer.priority === "urgent") ||
-        (runtime.customerFilter === "unassigned" && customer.unassigned) ||
-        (runtime.customerFilter === "followup" && customer.stage === "追客中");
-      return matchesSearch && matchesFilter;
+      return matchesSearch && matchesCustomerFilter(customer, runtime.customerFilter) && matchesCustomerOwner(customer);
     });
   }
 
@@ -1281,7 +1402,8 @@ import {
     if (!filtered.length) {
       return `<div class="empty-state" style="min-height:220px"><div class="empty-state-inner"><div class="empty-icon" aria-hidden="true">⌕</div><h3 class="empty-title">該当する顧客はいません</h3><p class="empty-copy">検索語やフィルターを変えてください。</p></div></div>`;
     }
-    return `<div class="customer-list">${filtered.map(renderCustomerCard).join("")}</div>`;
+    return `<div class="customer-list">${filtered.map(renderCustomerCard).join("")}</div>
+      <p class="list-footnote">全 ${Customer.length}件中 1〜${filtered.length}件を表示</p>`;
   }
 
   function refreshCustomerResults() {
@@ -1324,6 +1446,8 @@ import {
           ${mascot("search", "proposal-mascot")}
         </div>
 
+        ${renderProposalProgress(likedCount, skippedCount)}
+
         <div class="deck-heading">
           <h1 id="properties-title" class="deck-title">候補カード</h1>
           <span class="deck-count">${remaining.length}件</span>
@@ -1342,6 +1466,35 @@ import {
             ${renderPropertyCard(current, "current", selected.id, { cursor, total: remaining.length, likedCount, skippedCount })}
             ${next ? renderPropertyCard(next, "next", selected.id, {}) : ""}
           </div>` : adapterState.empty ? renderPropertyNoResults(selected) : hiddenByFilter ? renderDeckFilteredOut(hiddenByFilter) : renderPropertyEmpty(selected, { liked: likedCount, skipped: skippedCount })}
+      </section>`;
+  }
+
+  /**
+   * 提案が今どの段までいったかを、キャラクターの5段で示す。
+   * 判断の履歴（保存・Skip）から現在地を決めるので、営業が別途入力しなくてよい。
+   */
+  function renderProposalProgress(likedCount, skippedCount) {
+    if (!runtime.mascotsReady) return "";
+    const steps = [
+      ["proposing", "候補発見", "マッチ度が高い物件を発見！"],
+      ["todo", "提案前", "内容を確認して提案準備中"],
+      ["done", "保存済", "気になる物件を保存しました"],
+      ["viewing", "内見提案", "お客様に提案して内見を案内！"],
+      ["applying", "次へ", "内見後のフォローで次の提案へ！"],
+    ];
+    const active = likedCount >= 3 ? 3 : likedCount >= 1 ? 2 : skippedCount >= 1 ? 1 : 0;
+    return `
+      <section class="card progress-card" aria-label="提案の進み具合">
+        <p class="progress-title">提案の進み具合</p>
+        <ol class="progress-steps">
+          ${steps.map(([art, label, copy], index) => `
+            <li class="progress-step${index === active ? " is-active" : ""}${index < active ? " is-done" : ""}">
+              <span class="progress-index">${index + 1}</span>
+              ${statusArt(art, "progress-art")}
+              <span class="progress-label">${escapeHTML(label)}</span>
+              <span class="progress-copy">${escapeHTML(copy)}</span>
+            </li>`).join("")}
+        </ol>
       </section>`;
   }
 
@@ -1406,9 +1559,10 @@ import {
           <img class="card-photo ${visual.kind}" src="${escapeHTML(visual.url)}" alt="${escapeHTML(property.name)}の${visual.label}" loading="${isCurrent ? "eager" : "lazy"}" referrerpolicy="no-referrer" draggable="false" />
           <span class="match-badge">マッチ度 <strong>${clampPercent(candidate?.matchScore)}</strong><span class="match-badge-unit">%</span></span>
           <span class="freshness-chip ${stale ? "stale" : ""}"><span aria-hidden="true">◷</span>${stale ? " ⚠" : ""}更新 ${escapeHTML(relativeSourceTime(property.sourceUpdatedAt))}</span>
-          <span class="listing-chip ${listingTone(property.listingStatus)}">${escapeHTML(property.listingStatus)}</span>
+          ${isCurrent && candidate?.matchScore >= 90 ? `<span class="card-bubble">${statusArt("done", "bubble-art")}<span class="bubble-text">すごくマッチしてるよ！<br />ご希望の条件にぴったりの物件だよ</span></span>` : ""}
         </div>
         <div class="card-body">
+          <span class="listing-chip ${listingTone(property.listingStatus)}">${escapeHTML(property.listingStatus)}</span>
           <div class="card-title-row">
             <button class="card-name-button" type="button" data-action="open-property-detail" data-id="${property.id}">${escapeHTML(property.name)}</button>
             <span class="card-chevron" aria-hidden="true">›</span>
@@ -1602,6 +1756,13 @@ import {
           ${mascot("hero", "hero-mascot")}
         </header>
         ${renderFreshnessWarning("空室と鍵は、出発前に管理会社へ再確認してください")}
+        ${renderStatusLegend("内見ステータス", ["progress", "urgent", "viewing", "waiting", "done"], {
+          progress: { label: "移動前", copy: "これから移動" },
+          urgent: { label: "鍵確認中", copy: "到着・鍵確認中" },
+          viewing: { label: "案内中", copy: "内見案内中" },
+          waiting: { label: "申込検討", copy: "申込を検討中" },
+          done: { label: "完了", copy: "内見完了" },
+        })}
 
         <div class="segmented-control" aria-label="内見期間">
           ${Object.entries(ranges).map(([id, label]) => `<button class="segmented-button" type="button" data-action="viewing-range" data-range="${id}" aria-pressed="${runtime.viewingRange === id}">${label}</button>`).join("")}
@@ -1687,12 +1848,12 @@ import {
 
   function renderCases() {
     const stages = [
-      ["追客中", "追客中の案件", "line"],
-      ["内見調整", "内見の日程を調整中の案件", "checklist"],
-      ["申込準備", "申込に必要な書類を準備中の案件", "doc"],
-      ["審査中", "審査結果を待っている案件", "search"],
-      ["契約準備", "契約手続きを進めている案件", "house"],
-      ["契約済", "契約が完了した案件", "idea"],
+      ["追客中", "積極的にアプローチ中"],
+      ["内見調整", "内見日程を調整中"],
+      ["申込準備", "申込に向けて準備中"],
+      ["審査中", "審査結果を待っている"],
+      ["契約準備", "契約手続きを進めている"],
+      ["契約済", "契約手続き完了"],
     ];
     const dueSoon = Case.filter((item) => {
       const due = Date.parse(item.dueAt);
@@ -1709,33 +1870,45 @@ import {
           ${mascot("hero", "hero-mascot")}
         </header>
 
+        ${renderStatusLegend("ステージの見方", ["proposing", "viewing", "applying", "waiting", "done", "recheck"], {
+          proposing: { label: "追客中", copy: "積極的にアプローチ中" },
+          viewing: { label: "内見調整", copy: "内見日程を調整中" },
+          applying: { label: "申込準備", copy: "申込に向けて準備中" },
+          waiting: { label: "申込以降", copy: "申込後の手続き中" },
+          done: { label: "契約完了", copy: "契約手続き完了" },
+          recheck: { label: "要再確認", copy: "確認・対応が必要です" },
+        })}
+
         <div class="metric-grid" aria-label="案件概要">
-          <div class="metric-card">
+          <button class="metric-card is-link" type="button" data-action="go-tab" data-tab-target="today">
             <span class="metric-icon" aria-hidden="true">◷</span>
             <div class="metric-body">
               <p class="metric-label">期限24時間以内</p>
               <p class="metric-value">${dueSoon}<span class="metric-unit">件</span></p>
               <p class="metric-note">早めの対応で成約率UP</p>
             </div>
-          </div>
-          <div class="metric-card">
+            <span class="chevron" aria-hidden="true">›</span>
+          </button>
+          <button class="metric-card is-link" type="button" data-action="go-tab" data-tab-target="viewings">
             <span class="metric-icon" aria-hidden="true">▤</span>
             <div class="metric-body">
               <p class="metric-label">申込以降</p>
               <p class="metric-value">${Case.filter((item) => stageAtOrBeyond(item.stage, "申込準備")).length}<span class="metric-unit">件</span></p>
               <p class="metric-note">契約まであと一歩</p>
             </div>
-          </div>
+            <span class="chevron" aria-hidden="true">›</span>
+          </button>
         </div>
 
         <section class="section" aria-labelledby="pipeline-heading">
           <h2 id="pipeline-heading" class="sr-only">ステージ別の案件</h2>
-          ${stages.map(([stage, copy, art], index) => {
+          ${stages.map(([stage, copy], index) => {
             const cases = Case.filter((item) => item.stage === stage);
             return `<details class="card stage-accordion" ${index === 1 ? "open" : ""}>
               <summary class="stage-summary">
-                ${mascot(art, "stage-mascot")}
+                ${statusArt(CASE_STAGE_ART[stage] || "todo", "stage-mascot")}
                 <span class="stage-summary-main"><span class="stage-name">${stage}</span><span class="stage-copy">${copy}</span></span>
+                <span class="stage-count">${cases.length}<span class="stage-count-unit">件</span></span>
                 <span class="stage-toggle" aria-hidden="true"></span>
               </summary>
               <div class="stage-content">${cases.map(renderCaseCard).join("") || '<p class="small-copy stage-empty">このステージの案件はありません。</p>'}</div>
@@ -1759,11 +1932,9 @@ import {
         <span class="case-due ${urgent ? "is-urgent" : ""}">${escapeHTML(dueLabel)}</span>
       </span>
       <span class="case-detail">
-        <span class="case-next"><span class="case-label">次のアクション</span><span class="case-next-action">${escapeHTML(caseItem.nextAction)}</span></span>
-        <span class="case-status-row">
-          <span class="case-status"><span class="case-label">書類ステータス</span><span class="case-status-value"><span class="dot ok" aria-hidden="true"></span>${escapeHTML(caseItem.documentStatus)}</span></span>
-          <span class="case-status"><span class="case-label">申込ステータス</span><span class="case-status-value"><span class="dot info" aria-hidden="true"></span>${escapeHTML(caseItem.applicationStatus)}</span></span>
-        </span>
+        <span class="case-fact"><span class="case-fact-icon" aria-hidden="true">✓</span><span class="case-label">次のアクション</span><span class="case-fact-value">${escapeHTML(caseItem.nextAction)}</span></span>
+        <span class="case-fact"><span class="case-fact-icon" aria-hidden="true">▤</span><span class="case-label">書類ステータス</span><span class="status-pill ${caseItem.documentStatus === "不要" ? "neutral" : "warning"}">${escapeHTML(caseItem.documentStatus)}</span></span>
+        <span class="case-fact"><span class="case-fact-icon" aria-hidden="true">✎</span><span class="case-label">申込ステータス</span><span class="status-pill ${caseItem.applicationStatus === "未申込" ? "neutral" : "info"}">${escapeHTML(caseItem.applicationStatus)}</span></span>
       </span>
       <span class="chevron" aria-hidden="true">›</span>
     </button>`;
@@ -2149,6 +2320,12 @@ import {
       runtime.talkDraft = modalRoot.querySelector("#talk-body")?.value || "";
       openTalk(id);
       showToast("顧客からの受信を再現しました（Webhook相当）");
+    }
+    if (action === "open-customer-filters") openCustomerFilters();
+    if (action === "customer-owner") {
+      runtime.customerOwner = control.dataset.owner;
+      renderApp();
+      openCustomerFilters();
     }
     if (action === "open-deck-filters") openDeckFilters();
     if (action === "toggle-deck-filter") {

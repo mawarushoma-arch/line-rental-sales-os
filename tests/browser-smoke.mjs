@@ -310,7 +310,7 @@ async function run() {
   // 0件モードではカードが出ないので、何を待つかを呼び出し側で選ぶ
   const selectCustomer = async (customerId = "c1", expect = "card") => {
     await click('[data-tab="customers"]');
-    await waitFor("document.querySelector('#customers-title')?.textContent === '顧客'", "customers tab");
+    await waitFor("document.querySelector('#customers-title')?.textContent.startsWith('顧客') === true", "customers tab");
     await click(`[data-action="open-customer"][data-id="${customerId}"]`);
     await waitFor("Boolean(document.querySelector('#customer-detail-title'))", "customer detail sheet");
     await click(`[data-action="select-customer"][data-id="${customerId}"]`);
