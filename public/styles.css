@@ -1024,8 +1024,8 @@ img {
   /* 画面の端まで暗い面にし、左右に隣のカードの縁を覗かせる */
   margin: -18px calc(-1 * max(16px, var(--safe-right))) calc(-116px - var(--safe-bottom))
     calc(-1 * max(16px, var(--safe-left)));
-  padding: 18px max(16px, var(--safe-right)) calc(94px + var(--safe-bottom))
-    max(16px, var(--safe-left));
+  /* 固定フッターを出さない画面なので、下は積み上がるカードのために空けるだけでよい */
+  padding: 18px max(16px, var(--safe-right)) var(--safe-bottom) max(16px, var(--safe-left));
   background: var(--bg);
   color: var(--text);
 
@@ -1084,6 +1084,296 @@ body.deck-mode .mock-badge {
   border-color: #32353a;
   background: #292c31;
   color: #a6aaa8;
+}
+
+/* 仕分け中は画面を広く使いたいので、5タブの固定フッターは出さない。
+   移動導線は右下の .deck-nav が受け持つ（ボタン自体はDOMに残す）。 */
+body.deck-mode .bottom-nav {
+  display: none;
+}
+
+.deck-icon-button {
+  display: grid;
+  width: 40px;
+  height: 40px;
+  place-items: center;
+  border-radius: 14px;
+  background: var(--surface-soft);
+  color: var(--muted-strong);
+  font-size: 13px;
+  letter-spacing: 0.08em;
+}
+
+.deck-chips {
+  display: flex;
+  gap: 8px;
+  margin: 0 0 12px;
+  padding: 2px 2px 4px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.deck-chips::-webkit-scrollbar {
+  display: none;
+}
+
+.deck-chip {
+  position: relative;
+  min-height: 36px;
+  flex: 0 0 auto;
+  padding: 0 14px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--surface-soft);
+  color: var(--muted-strong);
+  font-size: 12px;
+  font-weight: 780;
+  white-space: nowrap;
+}
+
+.deck-chip.on {
+  background: #f4f3f0;
+  color: #17181b;
+}
+
+.deck-chip.round {
+  width: 36px;
+  padding: 0;
+}
+
+.chip-dot {
+  position: absolute;
+  top: 7px;
+  right: 7px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+
+/* 保存したカードが下に積み上がっていく置き場 */
+.deck-pile {
+  position: relative;
+  height: 92px;
+  margin: 10px calc(-1 * max(16px, var(--safe-right))) 0 calc(-1 * max(16px, var(--safe-left)));
+  transition: transform 160ms ease;
+}
+
+.pile-slab {
+  position: absolute;
+  right: calc(max(16px, var(--safe-right)) - var(--i) * 7px);
+  bottom: 0;
+  left: calc(max(16px, var(--safe-left)) - var(--i) * 7px);
+  z-index: calc(3 - var(--i));
+  height: 74px;
+  overflow: hidden;
+  border-radius: 24px 24px 0 0;
+  box-shadow: 0 -8px 22px rgba(0, 0, 0, 0.34);
+  transform: translateY(calc(var(--i) * -9px));
+}
+
+.pile-slab img {
+  width: 100%;
+  height: 130px;
+  object-fit: cover;
+  opacity: 0.92;
+  pointer-events: none;
+}
+
+.deck-pile.is-empty::before {
+  position: absolute;
+  right: max(16px, var(--safe-right));
+  bottom: 0;
+  left: max(16px, var(--safe-left));
+  height: 62px;
+  border: 1px dashed var(--line-strong);
+  border-bottom: 0;
+  border-radius: 24px 24px 0 0;
+  content: "";
+}
+
+.pile-pill {
+  position: absolute;
+  z-index: 6;
+  bottom: 16px;
+  left: 50%;
+  min-height: 44px;
+  padding: 0 22px;
+  border: 0;
+  border-radius: 999px;
+  background: rgba(20, 21, 24, 0.82);
+  color: #f7f7f5;
+  font-size: 13px;
+  font-weight: 820;
+  cursor: pointer;
+  backdrop-filter: blur(10px);
+  transform: translateX(-50%);
+}
+
+.deck-tray.is-target .pile-pill,
+.deck-pile.is-target .pile-pill {
+  background: var(--accent);
+  color: var(--accent-text);
+}
+
+.deck-pile.is-target .pile-slab {
+  transform: translateY(calc(var(--i) * -9px - 5px));
+}
+
+/* カード上の判断ボタン。トレイに行を足さずに済ませ、その分カードを大きく取る */
+/* 右下は移動メニュー（.deck-nav）が使うので、判断ボタンは左下へ置いて衝突を避ける */
+.card-decide {
+  position: absolute;
+  z-index: 4;
+  bottom: 16px;
+  left: 16px;
+  display: flex;
+  gap: 10px;
+}
+
+.card-action {
+  display: grid;
+  width: 52px;
+  height: 52px;
+  place-items: center;
+  border: 1px solid rgba(255, 255, 255, 0.34);
+  border-radius: 50%;
+  background: rgba(18, 19, 22, 0.58);
+  color: #fff;
+  font-size: 19px;
+  backdrop-filter: blur(10px);
+}
+
+.card-action.save {
+  border-color: transparent;
+  background: var(--accent);
+  color: var(--accent-text);
+}
+
+.card-action:disabled {
+  background: rgba(18, 19, 22, 0.5);
+  color: rgba(255, 255, 255, 0.5);
+}
+
+/* 右下メニュー */
+.deck-nav {
+  position: fixed;
+  z-index: 90;
+  right: max(16px, var(--safe-right));
+  bottom: calc(13px + var(--safe-bottom));
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 10px;
+}
+
+.deck-nav-scrim {
+  position: fixed;
+  z-index: -1;
+  border: 0;
+  inset: 0;
+  background: rgba(6, 7, 9, 0.5);
+}
+
+.deck-nav-items {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+  animation: deck-menu-in 160ms ease-out;
+}
+
+@keyframes deck-menu-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+}
+
+.deck-nav-item {
+  display: flex;
+  min-height: 46px;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  padding: 0 16px;
+  border: 1px solid #32353a;
+  border-radius: 16px;
+  background: #1b1d21;
+  color: #f7f7f5;
+  font-size: 13px;
+  font-weight: 800;
+  box-shadow: 0 10px 26px rgba(0, 0, 0, 0.4);
+}
+
+.deck-nav-icon {
+  font-size: 15px;
+  opacity: 0.75;
+}
+
+.deck-fab {
+  display: grid;
+  width: 56px;
+  height: 56px;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--accent);
+  color: var(--accent-text);
+  font-size: 20px;
+  font-weight: 850;
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.44);
+}
+
+/* 絞り込みシート */
+.filter-row {
+  display: flex;
+  width: 100%;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: var(--surface);
+  text-align: left;
+}
+
+.filter-row.on {
+  border-color: var(--accent);
+  background: var(--surface-tint);
+}
+
+.filter-check {
+  display: grid;
+  width: 24px;
+  height: 24px;
+  flex: 0 0 24px;
+  place-items: center;
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--accent-text);
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.filter-row.on .filter-check {
+  border-color: transparent;
+  background: var(--accent);
+}
+
+.filter-main {
+  display: grid;
+  gap: 3px;
+}
+
+.filter-label {
+  font-size: 14px;
+  font-weight: 800;
+}
+
+.filter-copy {
+  color: var(--muted);
+  font-size: 11px;
 }
 
 .deck-header {
@@ -1256,7 +1546,8 @@ body.deck-mode .mock-badge {
   right: 18px;
   bottom: 18px;
   left: 18px;
-  padding-bottom: 26px;
+  /* 下端の判断ボタンと「タップで詳細」の分を空ける */
+  padding-bottom: 62px;
   color: #fff;
 }
 
@@ -1330,72 +1621,20 @@ body.deck-mode .mock-badge {
   transform: translate(-50%, -50%);
 }
 
-.deck-tray {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin: 14px 0 0;
-  padding: 9px 10px;
-  border: 1px solid var(--line);
-  border-radius: 24px;
-  background: var(--surface);
-  transition:
-    border-color 140ms ease,
-    box-shadow 140ms ease;
-}
-
-.deck-tray.is-target {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 26%, transparent);
-}
-
-.tray-deck {
-  min-height: 44px;
-  flex: 1;
-  border: 0;
-  border-radius: 17px;
-  background: var(--surface-soft);
-  color: var(--text);
-  font-size: 13px;
-  font-weight: 820;
-  cursor: pointer;
-}
-
-.tray-side {
-  min-width: 68px;
-  min-height: 44px;
-  border: 1px solid var(--line-strong);
-  border-radius: 17px;
-  background: transparent;
-  color: var(--muted-strong);
-  font-size: 13px;
-  font-weight: 820;
-  cursor: pointer;
-}
-
-.tray-side.save {
-  border-color: transparent;
-  background: var(--accent);
-  color: var(--accent-text);
-}
-
-.tray-side:disabled {
-  cursor: not-allowed;
-  opacity: 0.45;
-}
-
-.deck-hint,
 .deck-position {
-  margin: 10px 0 0;
-  color: var(--muted);
+  margin: 8px 0 0;
+  color: var(--muted-strong);
   font-size: 11px;
   font-weight: 700;
   text-align: center;
 }
 
-.deck-position {
-  margin-top: 4px;
-  color: var(--muted-strong);
+.deck-hint {
+  margin: 8px 0 0;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+  text-align: center;
 }
 
 .property-data-grid {

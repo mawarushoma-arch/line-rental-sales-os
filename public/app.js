@@ -167,6 +167,18 @@ import {
   const REDUCED_MOTION = window.matchMedia("(prefers-reduced-motion: reduce)");
   const MOCK_NOW = Date.parse("2026-08-11T11:20:00+09:00");
   const UNDO_SECONDS = 8;
+  // 仕分けの並び替え。営業がその場で切り替える軸だけに絞る。
+  const DECK_SORTS = [
+    { id: "match", label: "マッチ度順" },
+    { id: "rent", label: "家賃が安い順" },
+    { id: "ad", label: "AD高い順" },
+    { id: "new", label: "新着順" },
+  ];
+  const DECK_FILTERS = [
+    { id: "hideClosed", label: "募集終了を隠す", copy: "申込あり・募集終了のうち、募集終了だけを外します" },
+    { id: "viewableToday", label: "本日内見できる物件だけ", copy: "内見可否が「本日可」のものに絞ります" },
+    { id: "hideStale", label: "鮮度が古い物件を隠す", copy: "更新から24時間を超えたものを外します" },
+  ];
 
   const propertySeeds = [
     ["中目黒リバーサイド", "中目黒駅 徒歩6分・1LDK 38.2㎡", 18.2, 1.2, "photo-1522708323590-d24dbb6b0267"],
@@ -658,6 +670,9 @@ import {
     deckCursor: 0,
     deckSlide: null,
     suppressCardClick: false,
+    deckSort: "match",
+    deckFilters: { hideClosed: false, viewableToday: false, hideStale: false },
+    deckMenuOpen: false,
   };
   const replyGateway = new MockApprovedReplyGateway();
   let undoTimer = 0;
@@ -712,12 +727,34 @@ import {
     return effectiveCandidateStatus(relation?.status, state.decisions[customerId], propertyId);
   }
 
+  function adValue(property) {
+    const parsed = Number.parseInt(String(property.internal?.ad || "").replace(/[^0-9]/g, ""), 10);
+    return Number.isFinite(parsed) ? parsed : 0;
+  }
+
   function matchingPropertiesForCustomer(customerId) {
-    return [...Property].sort((left, right) => {
-      const leftScore = candidateByIds(customerId, left.id)?.matchScore ?? 0;
-      const rightScore = candidateByIds(customerId, right.id)?.matchScore ?? 0;
-      return rightScore - leftScore;
-    });
+    const score = (property) => candidateByIds(customerId, property.id)?.matchScore ?? 0;
+    // 同点は必ずマッチ度で決着させ、並び替えを切り替えても順序がぶれないようにする。
+    const comparators = {
+      match: (left, right) => score(right) - score(left),
+      rent: (left, right) =>
+        left.rentYen + left.managementFeeYen - (right.rentYen + right.managementFeeYen) || score(right) - score(left),
+      ad: (left, right) => adValue(right) - adValue(left) || score(right) - score(left),
+      new: (left, right) => Date.parse(right.listedAt) - Date.parse(left.listedAt) || score(right) - score(left),
+    };
+    return [...Property].sort(comparators[runtime.deckSort] || comparators.match);
+  }
+
+  function passesDeckFilters(property) {
+    const filters = runtime.deckFilters;
+    if (filters.hideClosed && property.listingStatus === "募集終了") return false;
+    if (filters.viewableToday && property.viewingAvailable !== "本日可") return false;
+    if (filters.hideStale && propertyIsStale(property)) return false;
+    return true;
+  }
+
+  function activeDeckFilterCount() {
+    return Object.values(runtime.deckFilters).filter(Boolean).length;
   }
 
   function isTodayActionDone(item) {
@@ -877,6 +914,7 @@ import {
   function setActiveTab(tab) {
     if (!VALID_TABS.includes(tab) || tab === state.activeTab) return;
     if (runtime.undo) clearUndoToast();
+    runtime.deckMenuOpen = false;
     closeModal();
     state.activeTab = tab;
     const saved = persistState();
@@ -1103,10 +1141,13 @@ import {
     const statuses = new Map(
       orderedProperties.map((property) => [property.id, effectiveStatusForProperty(selected.id, property.id)]),
     );
-    const remaining = adapterState.empty
+    const unreviewed = adapterState.empty
       ? []
       : orderedProperties.filter((property) => statuses.get(property.id) === "unreviewed");
-    const likedCount = [...statuses.values()].filter((status) => status === "liked").length;
+    const remaining = unreviewed.filter(passesDeckFilters);
+    const hiddenByFilter = unreviewed.length - remaining.length;
+    const likedProperties = orderedProperties.filter((property) => statuses.get(property.id) === "liked");
+    const likedCount = likedProperties.length;
     const skippedCount = [...statuses.values()].filter((status) => status === "skipped").length;
     // 横スワイプは判断せず前後へ送るだけなので、いま見ている位置を保持する。
     const cursor = clampDeckCursor(remaining.length);
@@ -1121,8 +1162,12 @@ import {
         </div>
         <header class="deck-header">
           <h1 id="properties-title" class="deck-title">候補カード <span class="deck-count">${remaining.length}</span></h1>
-          <button class="ghost-button compact-button" type="button" data-action="edit-preference" data-preference="propertyFields">表示項目</button>
+          <button class="deck-icon-button" type="button" data-action="edit-preference" data-preference="propertyFields" aria-label="カードの表示項目を編集"><span aria-hidden="true">|||</span></button>
         </header>
+        <div class="deck-chips" role="group" aria-label="並び替えと絞り込み">
+          <button class="deck-chip round ${activeDeckFilterCount() ? "on" : ""}" type="button" data-action="open-deck-filters" aria-label="絞り込み${activeDeckFilterCount() ? `（${activeDeckFilterCount()}件適用中）` : ""}"><span aria-hidden="true">⌕</span>${activeDeckFilterCount() ? `<span class="chip-dot" aria-hidden="true"></span>` : ""}</button>
+          ${DECK_SORTS.map((sort) => `<button class="deck-chip ${runtime.deckSort === sort.id ? "on" : ""}" type="button" data-action="deck-sort" data-sort="${sort.id}" aria-pressed="${runtime.deckSort === sort.id}">${escapeHTML(sort.label)}</button>`).join("")}
+        </div>
         ${renderFreshnessWarning("空室・鍵・金額は提案前に再確認してください")}
         ${current ? `
           <div class="deck-stage" data-deck-stage aria-live="polite">
@@ -1130,14 +1175,43 @@ import {
             ${next ? renderPropertyCard(next, "next", selected.id) : ""}
             ${renderPropertyCard(current, "current", selected.id)}
           </div>
-          <div class="deck-tray" data-deck-tray>
-            <button class="tray-side" type="button" data-action="property-skip" data-id="${current.id}" aria-label="この物件をSkipする">Skip</button>
-            <button class="tray-deck" type="button" data-action="review-candidates" data-id="${selected.id}"><span aria-hidden="true">↑</span> 保存済み · ${likedCount}</button>
-            <button class="tray-side save" type="button" data-action="property-like" data-id="${current.id}" ${current.listingStatus === "募集終了" ? "disabled" : ""} aria-label="${current.listingStatus === "募集終了" ? "募集終了のため保存できません" : "この物件を候補へ保存する"}">${current.listingStatus === "募集終了" ? "終了" : "保存"}</button>
-          </div>
-          <p class="deck-hint">カードを下へスワイプで保存 · 左右で前後の候補 · タップで詳細</p>
-          <p class="deck-position">${cursor + 1} / ${remaining.length}件目　Skip ${skippedCount}件</p>` : adapterState.empty ? renderPropertyNoResults(selected) : renderPropertyEmpty(selected, { liked: likedCount, skipped: skippedCount })}
+          <p class="deck-position">${cursor + 1} / ${remaining.length}件目　保存 ${likedCount} · Skip ${skippedCount}${hiddenByFilter ? ` · 絞り込みで${hiddenByFilter}件非表示` : ""}</p>
+          ${likedCount ? "" : '<p class="deck-hint">カードを下へスワイプすると、ここに保存されます</p>'}
+          ${renderDeckPile(likedProperties, selected)}` : adapterState.empty ? renderPropertyNoResults(selected) : hiddenByFilter ? renderDeckFilteredOut(hiddenByFilter) : renderPropertyEmpty(selected, { liked: likedCount, skipped: skippedCount })}
+        ${renderDeckMenu()}
       </section>`;
+  }
+
+  /** 保存したカードが画面下へ積み上がっていく様子を出す（束をタップで保存済み一覧へ）。 */
+  function renderDeckPile(likedProperties, selected) {
+    const slabs = [...likedProperties].reverse().slice(0, 3);
+    return `
+      <div class="deck-pile ${slabs.length ? "" : "is-empty"}" data-deck-tray>
+        ${slabs.map((property, index) => `<span class="pile-slab" style="--i:${index}" aria-hidden="true"><img src="${escapeHTML(property.imageUrl)}" alt="" loading="eager" referrerpolicy="no-referrer" draggable="false" /></span>`).join("")}
+        <button class="pile-pill" type="button" data-action="review-candidates" data-id="${selected.id}"><span aria-hidden="true">↑</span> 保存済み · ${likedProperties.length}</button>
+      </div>`;
+  }
+
+  /** 固定フッターを隠す代わりの移動導線。物件画面を広く使うため右下に置く。 */
+  function renderDeckMenu() {
+    const destinations = [
+      ["today", "今日", "✓"],
+      ["customers", "顧客", "♙"],
+      ["viewings", "内見", "⌖"],
+      ["cases", "案件", "▤"],
+    ];
+    return `
+      <div class="deck-nav ${runtime.deckMenuOpen ? "is-open" : ""}" data-deck-nav>
+        ${runtime.deckMenuOpen ? '<button class="deck-nav-scrim" type="button" data-action="toggle-deck-menu" aria-label="メニューを閉じる"></button>' : ""}
+        <div class="deck-nav-items" role="menu" ${runtime.deckMenuOpen ? "" : "hidden"}>
+          ${destinations.map(([tab, label, icon]) => `<button class="deck-nav-item" type="button" role="menuitem" data-action="go-tab" data-tab-target="${tab}"><span class="deck-nav-icon" aria-hidden="true">${icon}</span>${label}</button>`).join("")}
+        </div>
+        <button class="deck-fab" type="button" data-action="toggle-deck-menu" aria-expanded="${runtime.deckMenuOpen}" aria-haspopup="menu" aria-label="${runtime.deckMenuOpen ? "メニューを閉じる" : "ほかの画面へ移動"}"><span aria-hidden="true">${runtime.deckMenuOpen ? "×" : "≡"}</span></button>
+      </div>`;
+  }
+
+  function renderDeckFilteredOut(hiddenByFilter) {
+    return `<div class="empty-state"><div class="empty-state-inner"><div class="empty-icon" aria-hidden="true">⌕</div><h2 class="empty-title">絞り込みで全件が隠れています</h2><p class="empty-copy">条件に合う未確認の物件が${hiddenByFilter}件あります。絞り込みを外すと表示されます。</p><button class="primary-button" type="button" data-action="clear-deck-filters">絞り込みを外す</button></div></div>`;
   }
 
   function clampDeckCursor(length) {
@@ -1153,7 +1227,7 @@ import {
     const selected = customerById(state.selectedCustomerId);
     if (!selected || runtime.decisionPending) return;
     const remaining = matchingPropertiesForCustomer(selected.id).filter(
-      (property) => effectiveStatusForProperty(selected.id, property.id) === "unreviewed",
+      (property) => effectiveStatusForProperty(selected.id, property.id) === "unreviewed" && passesDeckFilters(property),
     );
     const nextCursor = runtime.deckCursor + step;
     if (nextCursor < 0 || nextCursor > remaining.length - 1) return;
@@ -1206,8 +1280,31 @@ import {
           <p class="card-price">${escapeHTML(manYen(property.rentYen))}<span class="card-layout"> / ${escapeHTML(layout || "間取り 未確認")}</span></p>
           <p class="card-walk">${escapeHTML(walk || "所在 未確認")}　内見 ${escapeHTML(property.viewingAvailable)}</p>
         </div>
-        ${isCurrent ? `<button class="card-open" type="button" data-action="open-property-detail" data-id="${property.id}" aria-label="${escapeHTML(property.name)}の詳細を開く"><span class="card-open-label">タップで詳細</span></button>` : ""}
+        ${isCurrent ? `<button class="card-open" type="button" data-action="open-property-detail" data-id="${property.id}" aria-label="${escapeHTML(property.name)}の詳細を開く"><span class="card-open-label">タップで詳細</span></button>
+        <div class="card-decide">
+          <button class="card-action skip" type="button" data-action="property-skip" data-id="${property.id}" aria-label="この物件をSkipする"><span aria-hidden="true">✕</span></button>
+          <button class="card-action save" type="button" data-action="property-like" data-id="${property.id}" ${property.listingStatus === "募集終了" ? "disabled" : ""} aria-label="${property.listingStatus === "募集終了" ? "募集終了のため保存できません" : "この物件を候補へ保存する"}"><span aria-hidden="true">${property.listingStatus === "募集終了" ? "—" : "♡"}</span></button>
+        </div>` : ""}
       </article>`;
+  }
+
+  function openDeckFilters() {
+    const content = `
+      <header class="sheet-header"><div><p class="eyebrow">FILTER</p><h2 id="deck-filter-title" class="sheet-title">絞り込み</h2><p class="sheet-subtitle">仕分けに出す物件を絞ります。判断済みの結果は変わりません</p></div><button class="icon-button" type="button" data-action="close-modal" aria-label="閉じる">×</button></header>
+      <div class="sheet-content">
+        <div class="checkbox-list">
+          ${DECK_FILTERS.map((filter) => `
+            <button class="filter-row ${runtime.deckFilters[filter.id] ? "on" : ""}" type="button" data-action="toggle-deck-filter" data-filter="${filter.id}" aria-pressed="${runtime.deckFilters[filter.id]}">
+              <span class="filter-check" aria-hidden="true">${runtime.deckFilters[filter.id] ? "✓" : ""}</span>
+              <span class="filter-main"><span class="filter-label">${escapeHTML(filter.label)}</span><span class="filter-copy">${escapeHTML(filter.copy)}</span></span>
+            </button>`).join("")}
+        </div>
+      </div>
+      <footer class="sheet-footer">
+        <button class="ghost-button" type="button" data-action="clear-deck-filters">すべて外す</button>
+        <button class="primary-button" type="button" data-action="close-modal">この条件で見る</button>
+      </footer>`;
+    openSheet(content, "deck-filter-title");
   }
 
   function openPropertyDetail(propertyId) {
@@ -1726,6 +1823,42 @@ import {
       renderApp({ focusSelector: `[data-action="complete-today-action"][data-id="${CSS.escape(id)}"]` });
       showToast(runtime.completedTodayActions.has(id) ? "完了にしました" : "未完了に戻しました");
     }
+    if (action === "deck-sort") {
+      const sort = control.dataset.sort;
+      if (DECK_SORTS.some((item) => item.id === sort) && runtime.deckSort !== sort) {
+        runtime.deckSort = sort;
+        runtime.deckCursor = 0;
+        renderApp({ focusSelector: `[data-action="deck-sort"][data-sort="${CSS.escape(sort)}"]` });
+        showToast(`${DECK_SORTS.find((item) => item.id === sort).label}に並び替えました`);
+      }
+    }
+    if (action === "open-deck-filters") openDeckFilters();
+    if (action === "toggle-deck-filter") {
+      const key = control.dataset.filter;
+      if (key in runtime.deckFilters) {
+        runtime.deckFilters[key] = !runtime.deckFilters[key];
+        runtime.deckCursor = 0;
+        renderApp();
+        openDeckFilters();
+      }
+    }
+    if (action === "clear-deck-filters") {
+      Object.keys(runtime.deckFilters).forEach((key) => {
+        runtime.deckFilters[key] = false;
+      });
+      runtime.deckCursor = 0;
+      closeModal();
+      renderApp();
+      showToast("絞り込みを外しました");
+    }
+    if (action === "toggle-deck-menu") {
+      runtime.deckMenuOpen = !runtime.deckMenuOpen;
+      renderApp({ focusSelector: ".deck-fab" });
+    }
+    if (action === "go-tab") {
+      runtime.deckMenuOpen = false;
+      setActiveTab(control.dataset.tabTarget);
+    }
     if (action === "open-property-detail") {
       // ドラッグの直後に発火するclickは詳細を開かない
       if (runtime.suppressCardClick) runtime.suppressCardClick = false;
@@ -1857,6 +1990,12 @@ import {
     if (event.key === "Escape" && modalRoot.innerHTML) {
       event.preventDefault();
       closeModal();
+      return;
+    }
+    if (event.key === "Escape" && runtime.deckMenuOpen) {
+      event.preventDefault();
+      runtime.deckMenuOpen = false;
+      renderApp({ focusSelector: ".deck-fab" });
       return;
     }
     if (event.key !== "Tab" || !modalRoot.innerHTML) return;
