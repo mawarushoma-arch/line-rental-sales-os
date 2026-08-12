@@ -736,6 +736,8 @@ import {
     talkDraft: "",
     talkCustomerId: null,
     incomingCount: 0,
+    // 挿し絵は素材が公開ディレクトリに置かれたときだけ描く
+    mascotsReady: false,
   };
   const replyGateway = new MockApprovedReplyGateway();
   let undoTimer = 0;
@@ -788,6 +790,27 @@ import {
   function effectiveStatusForProperty(customerId, propertyId) {
     const relation = candidateByIds(customerId, propertyId);
     return effectiveCandidateStatus(relation?.status, state.decisions[customerId], propertyId);
+  }
+
+  /**
+   * マスコットの挿し絵。画像が用意できたキーだけ描く。
+   * 未用意のキーは何も出さないので、素材が揃うまでレイアウトが崩れない。
+   */
+  const MASCOTS = {
+    hero: "/mascot/hero.png",
+    search: "/mascot/search.png",
+    checklist: "/mascot/checklist.png",
+    line: "/mascot/line.png",
+    doc: "/mascot/doc.png",
+    house: "/mascot/house.png",
+    idea: "/mascot/idea.png",
+    map: "/mascot/map.png",
+  };
+
+  function mascot(key, className) {
+    const source = MASCOTS[key];
+    if (!source || !runtime.mascotsReady) return "";
+    return `<img class="mascot ${className}" src="${escapeHTML(source)}" alt="" loading="lazy" draggable="false" />`;
   }
 
   /** 保存＝しおりを挟む操作なので、好意を表すハートではなくブックマークで示す。 */
@@ -1031,44 +1054,52 @@ import {
         <section class="section" aria-labelledby="priority-heading">
           <div class="section-heading">
             <h2 id="priority-heading" class="section-title">優先アクション</h2>
-            <span class="section-note">上から順に進める</span>
+            <button class="link-more" type="button" data-action="go-tab" data-tab-target="cases">すべて見る<span aria-hidden="true">›</span></button>
           </div>
-          ${priorities.slice(0, 3).map((item, index) => renderPriorityAction(item, index)).join("")}
+          <div class="card list-card">
+            <ul class="action-list">
+              ${priorities.slice(0, 3).map((item, index) => renderPriorityAction(item, index)).join("")}
+            </ul>
+          </div>
         </section>`,
       recommendation: `
         <section class="section" aria-labelledby="recommend-heading">
           <div class="section-heading">
             <h2 id="recommend-heading" class="section-title">推奨する1操作</h2>
-            <span class="mini-badge">AI補助</span>
+            <span class="section-note accent"><span aria-hidden="true">✦</span> AIサポート</span>
           </div>
           <div class="card recommend-card">
-            <div class="row" style="gap: 13px; align-items: flex-start;">
-              <span class="recommend-mark" aria-hidden="true">${replySent ? "✓" : "↗"}</span>
-              <div>
+            <div class="recommend-top">
+              ${mascot("idea", "recommend-mascot")}
+              <div class="recommend-copy">
                 <h3 class="card-title">${replySent ? "石井さんへ返信済み" : "石井さんへの返信案を確認"}</h3>
                 <p class="card-copy">${replySent ? "営業確認後の本文をモック送信記録へ保存しました。" : "初回返信を先に終えると、希望条件の回収と候補提案が今日中につながります。"}</p>
               </div>
+              <span class="recommend-mark" aria-hidden="true">${replySent ? "✓" : "↗"}</span>
             </div>
-            ${replySent ? '<button class="ghost-button wide-button" type="button" data-action="open-reply">送信記録を確認</button>' : '<button class="primary-button wide-button" type="button" data-action="open-reply">返信案を確認する</button>'}
+            <button class="primary-button wide-button" type="button" data-action="open-reply">${replySent ? "送信記録を確認" : "返信案を確認する"}</button>
           </div>
         </section>`,
       deadlines: `
         <section class="section" aria-labelledby="deadline-heading">
           <div class="section-heading">
-            <h2 id="deadline-heading" class="section-title">期限</h2>
-            <span class="section-note">2件</span>
+            <h2 id="deadline-heading" class="section-title">期限・リマインダー</h2>
+            <button class="link-more" type="button" data-action="go-tab" data-tab-target="cases">すべて見る<span aria-hidden="true">›</span></button>
           </div>
-          <ul class="deadline-list">
-            ${deadlines.map((item) => {
-              const customer = customerById(item.customerId);
-              const [day, time] = dueCalendarLabel(item.dueAt).split(" ");
-              return `<li><button class="deadline-row" type="button" data-action="open-customer" data-id="${customer.id}">
-                <span class="deadline-date">${escapeHTML(day)}<br />${escapeHTML(time || "")}</span>
-                <div class="deadline-main"><p class="deadline-title">${escapeHTML(item.title)}</p><p class="person-meta">${escapeHTML(customer.name)} · ${escapeHTML(item.action)}</p></div>
-                <span class="chevron" aria-hidden="true">›</span>
-              </button></li>`;
-            }).join("")}
-          </ul>
+          <div class="card list-card">
+            <ul class="deadline-list">
+              ${deadlines.map((item) => {
+                const customer = customerById(item.customerId);
+                const [day, time] = dueCalendarLabel(item.dueAt).split(" ");
+                const soon = day === "今日";
+                return `<li><button class="deadline-row" type="button" data-action="open-customer" data-id="${customer.id}">
+                  <span class="deadline-date ${soon ? "is-today" : "is-later"}"><span class="deadline-day">${escapeHTML(day)}</span><span class="deadline-time">${escapeHTML(time || "")}</span></span>
+                  <div class="deadline-main"><p class="deadline-title">${escapeHTML(item.title)}</p><p class="deadline-sub">${escapeHTML(customer.name)} · ${escapeHTML(item.action)}</p></div>
+                  <span class="chevron" aria-hidden="true">›</span>
+                </button></li>`;
+              }).join("")}
+            </ul>
+          </div>
         </section>`,
       timeline: `
         <section class="section" aria-labelledby="timeline-heading">
@@ -1086,18 +1117,33 @@ import {
     };
     return `
       <section class="view" aria-labelledby="today-title">
-        <header class="view-header">
-          <div>
-            <p class="eyebrow">GOOD MORNING, 佐藤さん</p>
-            <h1 id="today-title" class="page-title">今日の操縦席</h1>
+        <header class="hero">
+          <div class="hero-copy">
+            <p class="eyebrow"><span class="eyebrow-icon" aria-hidden="true">☀</span>GOOD MORNING, 佐藤さん</p>
+            <h1 id="today-title" class="hero-title">今日も良い一日に<br />しましょう！</h1>
+            <p class="hero-meta"><span class="hero-icon" aria-hidden="true">📅</span>8月11日 火曜日</p>
           </div>
-          <p class="date-chip">8月11日 火</p>
+          ${mascot("hero", "hero-mascot")}
         </header>
         ${renderFreshnessWarning("空室・鍵・金額は、提案と内見の前に再確認してください")}
 
-        <div class="summary-grid" aria-label="本日の概要">
-          <div class="metric-card"><span class="metric-label">優先アクション</span><strong class="metric-value">${priorities.length}<span class="metric-unit">件</span></strong></div>
-          <div class="metric-card"><span class="metric-label">本日の内見</span><strong class="metric-value">2<span class="metric-unit">組</span></strong></div>
+        <div class="metric-grid" aria-label="本日の概要">
+          <div class="metric-card">
+            ${mascot("checklist", "metric-mascot")}
+            <div class="metric-body">
+              <p class="metric-label">優先アクション</p>
+              <p class="metric-value">${priorities.length}<span class="metric-unit">件</span></p>
+              <p class="metric-note">期限内の対応</p>
+            </div>
+          </div>
+          <div class="metric-card">
+            ${mascot("house", "metric-mascot")}
+            <div class="metric-body">
+              <p class="metric-label">本日の内見</p>
+              <p class="metric-value">2<span class="metric-unit">組</span></p>
+              <p class="metric-note">確定済みの内見</p>
+            </div>
+          </div>
         </div>
         ${state.displayPreference.widgets.map((key) => widgets[key] || "").join("")}
 
@@ -1121,40 +1167,40 @@ import {
           ? "担当取得へ進む"
           : `${item.title}を${done ? "未完了に戻す" : "完了にする"}`;
     return `
-      <article class="card priority-card${done ? " is-done" : ""}">
-        <div class="card-body">
-          <div class="priority-top">
-            <span class="priority-index" aria-hidden="true">0${index + 1}</span>
-            <div class="priority-main">
-              <h3 class="card-title">${done ? "完了 · " : ""}${escapeHTML(item.title)}</h3>
-              <p class="card-copy">${escapeHTML(customer.name)} · ${escapeHTML(customer.status)}</p>
-              <div class="priority-meta"><span class="status-pill ${item.urgency}">${escapeHTML(priorityDueLabel(item))}</span><span class="status-pill neutral">${escapeHTML(item.action)}</span></div>
-            </div>
-            <button class="icon-button" type="button" data-action="${processAction}" data-id="${processId}" ${lockedDone ? "disabled" : ""} aria-label="${escapeHTML(controlLabel)}">${lockedDone ? "✓" : item.id === "ta2" || item.id === "ta6" ? "→" : done ? "↶" : "✓"}</button>
-          </div>
+      <li class="action-row${done ? " is-done" : ""}">
+        <span class="action-index" aria-hidden="true">0${index + 1}</span>
+        <div class="action-main">
+          <p class="action-title">${done ? "完了 · " : ""}${escapeHTML(item.title)}</p>
+          <p class="action-sub">${escapeHTML(customer.name)} · ${escapeHTML(customer.status)}</p>
+          <div class="action-tags"><span class="status-pill ${item.urgency}">${escapeHTML(priorityDueLabel(item))}</span><span class="status-pill neutral">${escapeHTML(item.action)}</span></div>
         </div>
-      </article>`;
+        ${mascot(item.id === "ta2" ? "line" : index === 2 ? "doc" : "search", "action-mascot")}
+        <button class="action-button" type="button" data-action="${processAction}" data-id="${processId}" ${lockedDone ? "disabled" : ""} aria-label="${escapeHTML(controlLabel)}">${lockedDone ? "✓" : item.id === "ta2" || item.id === "ta6" ? "→" : done ? "↶" : "✓"}</button>
+      </li>`;
   }
 
   function renderCustomers() {
     const unassigned = Customer.filter((customer) => customer.unassigned);
     return `
       <section class="view" aria-labelledby="customers-title">
-        <header class="view-header">
-          <div><p class="eyebrow">CUSTOMERS</p><h1 id="customers-title" class="page-title">顧客</h1></div>
-          <span class="date-chip">全 ${Customer.length}名</span>
+        <header class="hero">
+          <div class="hero-copy">
+            <p class="eyebrow">CUSTOMERS</p>
+            <h1 id="customers-title" class="hero-title">顧客</h1>
+          </div>
+          ${mascot("hero", "hero-mascot")}
         </header>
 
         <section class="card inbox-card" aria-labelledby="inbox-title">
           <div class="inbox-head">
-            <div><h2 id="inbox-title" class="card-title">未割当箱</h2><p class="card-copy">新着を取りこぼさない</p></div>
-            <span class="count-badge">${unassigned.length}</span>
+            <span class="inbox-mascot-wrap">${mascot("checklist", "inbox-mascot")}<span class="count-badge floating">${unassigned.length}</span></span>
+            <div class="inbox-copy">
+              <h2 id="inbox-title" class="card-title">未割当箱</h2>
+              <p class="card-copy">未割当のリードがあります</p>
+              ${unassigned.slice(0, 1).map((customer) => `<p class="inbox-name"><span class="meta-icon" aria-hidden="true">◍</span>${escapeHTML(customer.name)}</p>`).join("")}
+            </div>
+            ${unassigned.slice(0, 1).map((customer) => `<button class="primary-button compact-button" type="button" data-action="open-customer" data-id="${customer.id}">確認<span aria-hidden="true">›</span></button>`).join("")}
           </div>
-          ${unassigned.slice(0, 1).map((customer) => `<div class="inbox-person">
-            <span class="person-avatar accent" aria-hidden="true">${escapeHTML(customer.name.slice(0, 1))}</span>
-            <div class="person-main"><p class="person-name">${escapeHTML(customer.name)}</p><p class="person-meta">${escapeHTML(customer.source)} · ${escapeHTML(relativeCustomerTime(customer.lastContactAt))}</p></div>
-            <button class="primary-button compact-button" type="button" data-action="open-customer" data-id="${customer.id}">確認</button>
-          </div>`).join("")}
         </section>
 
         <div class="search-wrap">
@@ -1176,6 +1222,39 @@ import {
           <div id="customer-results">${renderCustomerResults()}</div>
         </section>
       </section>`;
+  }
+
+  /** 顧客カード1枚。上段=誰か、下段=次に何をするか、の2段構成にする。 */
+  function renderCustomerCard(customer) {
+    const condition = SearchCondition.find((item) => item.id === customer.searchConditionId);
+    const summary = condition?.items.slice(0, 3).map((item) => item.value).join("・") || "条件確認中";
+    const action = TodayAction.find((item) => item.customerId === customer.id);
+    const tone = customer.unassigned ? "neutral" : customer.priority === "urgent" ? "warning" : "info";
+    const label = customer.unassigned ? "未割当" : customer.priority === "urgent" ? "要対応" : "追客中";
+    return `
+      <article class="card customer-card${state.selectedCustomerId === customer.id ? " is-selected" : ""}">
+        <button class="customer-head" type="button" data-action="open-customer" data-id="${customer.id}">
+          <span class="person-avatar" aria-hidden="true">${escapeHTML(customer.name.slice(0, 1))}</span>
+          <span class="customer-info">
+            <span class="customer-name-row">
+              <span class="customer-name">${escapeHTML(customer.name)}</span>
+              <span class="status-pill ${tone}">${label}</span>
+            </span>
+            <span class="customer-meta">
+              <span class="meta-item"><span class="meta-icon" aria-hidden="true">▦</span>${escapeHTML(summary)}</span>
+              <span class="meta-item"><span class="meta-icon" aria-hidden="true">◷</span>${escapeHTML(relativeCustomerTime(customer.lastContactAt))}</span>
+              <span class="meta-item"><span class="meta-icon" aria-hidden="true">◍</span>${escapeHTML(customer.source)}</span>
+              <span class="meta-item"><span class="meta-icon" aria-hidden="true">◔</span>${escapeHTML(customer.unassigned ? "未割当" : customer.assignedTo)}</span>
+            </span>
+          </span>
+          ${mascot("search", "customer-mascot")}
+        </button>
+        ${action ? `<button class="customer-action" type="button" data-action="open-talk" data-id="${customer.id}">
+          <span class="meta-icon" aria-hidden="true">✉</span>
+          <span class="customer-action-label">${escapeHTML(action.title)}（${escapeHTML(priorityDueLabel(action))}）</span>
+          <span class="chevron" aria-hidden="true">›</span>
+        </button>` : ""}
+      </article>`;
   }
 
   function getFilteredCustomers() {
@@ -1201,18 +1280,7 @@ import {
     if (!filtered.length) {
       return `<div class="empty-state" style="min-height:220px"><div class="empty-state-inner"><div class="empty-icon" aria-hidden="true">⌕</div><h3 class="empty-title">該当する顧客はいません</h3><p class="empty-copy">検索語やフィルターを変えてください。</p></div></div>`;
     }
-    return `<ul class="customer-list">${filtered.map((customer) => {
-      const condition = SearchCondition.find((item) => item.id === customer.searchConditionId);
-      const summary = condition?.items.slice(0, 3).map((item) => item.value).join(" · ") || "条件確認中";
-      const action = TodayAction.find((item) => item.customerId === customer.id);
-      return `<li>
-        <button class="customer-item ${state.selectedCustomerId === customer.id ? "selected" : ""}" type="button" data-action="open-customer" data-id="${customer.id}">
-          <span class="person-avatar" aria-hidden="true">${escapeHTML(customer.name.slice(0, 1))}</span>
-          <span class="person-main"><span class="person-name">${escapeHTML(customer.name)}${customer.unassigned ? '<span class="unread-dot" aria-label="未読あり"></span>' : ""}</span><span class="person-meta">${escapeHTML(customer.status)} · ${escapeHTML(relativeCustomerTime(customer.lastContactAt))}</span><span class="customer-condition">${escapeHTML(summary)}</span>${action ? `<span class="customer-next">次：${escapeHTML(action.title)} · ${escapeHTML(priorityDueLabel(action))}</span>` : ""}</span>
-          <span class="customer-trailing"><span class="status-pill ${customer.priority}">${customer.unassigned ? "未割当" : escapeHTML(customer.assignedTo)}</span><span class="chevron" aria-hidden="true">›</span></span>
-        </button>
-      </li>`;
-    }).join("")}</ul>`;
+    return `<div class="customer-list">${filtered.map(renderCustomerCard).join("")}</div>`;
   }
 
   function refreshCustomerResults() {

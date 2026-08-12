@@ -1,29 +1,31 @@
 :root {
-  color-scheme: dark;
-  --bg: #101114;
-  --surface: #1b1d21;
-  --surface-raised: #22252a;
-  --surface-soft: #292c31;
-  --surface-tint: #16241d;
-  --text: #f7f7f5;
-  --muted: #a2a7a5;
-  --muted-strong: #c8ccc9;
-  --line: #32353a;
-  --line-strong: #454950;
-  /* 緑は「操作」専用。確認済み・完了はブルーへ逃がし、意味の衝突をなくす */
+  color-scheme: light;
+  /* デザインカンプ（UI/）に合わせたライトテーマ。緑は操作、青は確認・情報。 */
+  --bg: #ffffff;
+  --bg-soft: #f6f7f8;
+  --surface: #ffffff;
+  --surface-raised: #ffffff;
+  --surface-soft: #f4f5f6;
+  --surface-tint: #eafaef;
+  --text: #16181c;
+  --muted: #8a9099;
+  --muted-strong: #5c636c;
+  --line: #ebedf0;
+  --line-strong: #dcdfe3;
   --accent: #06c755;
-  --accent-strong: #4ee38b;
-  --accent-text: #04220f;
-  --success: #6fb6ff;
-  --success-soft: #16283d;
-  --danger: #ef8e87;
-  --danger-soft: #402423;
-  --warning: #efb865;
-  --warning-soft: #3b2f1d;
+  --accent-strong: #06a648;
+  --accent-text: #ffffff;
+  --accent-soft: #e8f8ee;
+  --success: #1f7ae0;
+  --success-soft: #eaf2fe;
+  --danger: #e5484d;
+  --danger-soft: #fdeced;
+  --warning: #d98211;
+  --warning-soft: #fdf3e3;
   --line-green: #06c755;
-  --shadow-card: 0 12px 34px rgba(0, 0, 0, 0.3);
-  --shadow-nav: 0 -12px 34px rgba(0, 0, 0, 0.36);
-  --radius-card: 20px;
+  --shadow-card: 0 2px 10px rgba(19, 24, 30, 0.05);
+  --shadow-nav: 0 -6px 20px rgba(19, 24, 30, 0.07);
+  --radius-card: 18px;
   --radius-button: 14px;
   --safe-top: env(safe-area-inset-top, 0px);
   --safe-right: env(safe-area-inset-right, 0px);
@@ -34,14 +36,13 @@
     -apple-system, BlinkMacSystemFont, sans-serif;
 }
 
-/* 端末がダーク設定のときは、もう一段沈めて写真と間取り図を立たせる */
+/* 端末がダーク設定でも、業務中の視認性を優先してライトのまま出す。
+   夜間の内見で眩しい場合に備え、面だけわずかに落とす。 */
 @media (prefers-color-scheme: dark) {
   :root {
-    --bg: #0b0c0e;
-    --surface: #17191c;
-    --surface-raised: #1f2226;
-    --surface-soft: #25282d;
-    --line: #2c2f34;
+    --bg: #fbfbfc;
+    --bg-soft: #f2f3f5;
+    --surface-soft: #eef0f2;
   }
 }
 
@@ -838,16 +839,15 @@ img {
 
 .filter-chip[aria-pressed="true"],
 .filter-chip.active {
-  background: var(--text);
-  color: var(--surface);
-  border-color: var(--text);
+  border-color: var(--accent);
+  background: var(--surface);
+  color: var(--accent-strong);
 }
 
 .inbox-card {
-  margin-bottom: 18px;
-  padding: 18px;
-  border-color: color-mix(in srgb, var(--accent) 46%, var(--line));
-  background: var(--surface-tint);
+  margin-bottom: 14px;
+  padding: 0;
+  background: var(--surface);
 }
 
 .inbox-head {
@@ -3058,4 +3058,465 @@ body.deck-mode .bottom-nav {
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
   }
+}
+
+/* ===== カンプ準拠のライトUI（ヘッダー・ヒーロー・リストカード） ===== */
+.user-chip {
+  display: inline-flex;
+  min-height: 36px;
+  align-items: center;
+  gap: 6px;
+  padding: 0 12px;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.user-chip-caret {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.mascot {
+  flex: 0 0 auto;
+  object-fit: contain;
+  pointer-events: none;
+  user-select: none;
+}
+
+.hero {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  margin: 2px 2px 14px;
+}
+
+.hero-copy {
+  min-width: 0;
+}
+
+.hero-title {
+  margin: 4px 0 0;
+  font-size: clamp(24px, 6.6vw, 30px);
+  font-weight: 880;
+  letter-spacing: -0.03em;
+  line-height: 1.25;
+}
+
+.hero-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 8px 0 0;
+  color: var(--muted-strong);
+  font-size: 13px;
+  font-weight: 750;
+}
+
+.hero-mascot {
+  width: min(42%, 168px);
+}
+
+.eyebrow-icon,
+.hero-icon {
+  margin-right: 5px;
+  font-size: 13px;
+}
+
+.link-more {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  min-height: 32px;
+  padding: 0 2px;
+  background: transparent;
+  color: var(--muted-strong);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.section-note.accent {
+  color: var(--accent-strong);
+  font-weight: 820;
+}
+
+.metric-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+.metric-card {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-card);
+  background: var(--surface);
+  box-shadow: var(--shadow-card);
+}
+
+.metric-mascot {
+  width: 46px;
+}
+
+.metric-body {
+  min-width: 0;
+}
+
+.metric-label {
+  margin: 0;
+  color: var(--muted-strong);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.metric-value {
+  margin: 2px 0 0;
+  color: var(--accent-strong);
+  font-size: 26px;
+  font-weight: 880;
+  letter-spacing: -0.04em;
+  line-height: 1.1;
+}
+
+.metric-unit {
+  margin-left: 2px;
+  font-size: 13px;
+  font-weight: 820;
+}
+
+.metric-note {
+  margin: 2px 0 0;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+/* 行を1枚のカードにまとめ、区切り線で分ける（カンプの見え方） */
+.list-card {
+  padding: 4px 0;
+}
+
+.action-list,
+.list-card .deadline-list {
+  display: grid;
+  gap: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.action-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 13px 14px;
+}
+
+.action-row + .action-row {
+  border-top: 1px solid var(--line);
+}
+
+.action-index {
+  display: grid;
+  width: 44px;
+  height: 44px;
+  flex: 0 0 44px;
+  place-items: center;
+  border-radius: 14px;
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+  font-size: 15px;
+  font-weight: 880;
+}
+
+.action-main {
+  min-width: 0;
+  flex: 1;
+}
+
+.action-title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 850;
+  letter-spacing: -0.015em;
+}
+
+.action-sub {
+  margin: 2px 0 0;
+  color: var(--muted-strong);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.action-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 7px;
+}
+
+.action-mascot {
+  width: 52px;
+  align-self: center;
+}
+
+.action-button {
+  display: grid;
+  width: 44px;
+  height: 44px;
+  flex: 0 0 44px;
+  align-self: center;
+  place-items: center;
+  border: 1px solid var(--accent);
+  border-radius: 13px;
+  background: var(--surface);
+  color: var(--accent-strong);
+  font-size: 17px;
+  font-weight: 850;
+}
+
+.action-button:disabled {
+  border-color: var(--line-strong);
+  color: var(--muted);
+}
+
+.action-row.is-done .action-title {
+  color: var(--muted-strong);
+}
+
+.list-card .deadline-row {
+  min-height: 64px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.list-card .deadline-list > li + li .deadline-row {
+  border-top: 1px solid var(--line);
+}
+
+.deadline-date {
+  display: grid;
+  width: 62px;
+  height: 46px;
+  flex: 0 0 62px;
+  place-items: center;
+  border-radius: 12px;
+  gap: 0;
+}
+
+.deadline-date.is-today {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+.deadline-date.is-later {
+  background: var(--success-soft);
+  color: var(--success);
+}
+
+.deadline-day {
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.deadline-time {
+  font-size: 15px;
+  font-weight: 870;
+  letter-spacing: -0.02em;
+}
+
+.deadline-title {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 820;
+}
+
+.deadline-sub {
+  margin: 2px 0 0;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.recommend-top {
+  display: flex;
+  align-items: flex-start;
+  gap: 11px;
+}
+
+.recommend-mascot {
+  width: 64px;
+}
+
+.recommend-copy {
+  min-width: 0;
+  flex: 1;
+}
+
+/* ===== 顧客カード（カンプ準拠） ===== */
+.brand-mark {
+  background: var(--accent);
+  color: #fff;
+}
+
+.customer-list {
+  display: grid;
+  gap: 10px;
+}
+
+.customer-card {
+  overflow: hidden;
+}
+
+.customer-card.is-selected {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-soft);
+}
+
+.customer-head {
+  display: flex;
+  width: 100%;
+  align-items: flex-start;
+  gap: 11px;
+  padding: 13px 14px;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+}
+
+.customer-info {
+  display: grid;
+  min-width: 0;
+  flex: 1;
+  gap: 6px;
+}
+
+.customer-name-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.customer-name {
+  overflow: hidden;
+  font-size: 16px;
+  font-weight: 860;
+  letter-spacing: -0.02em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.customer-meta {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 4px 10px;
+}
+
+.meta-item {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 5px;
+  overflow: hidden;
+  color: var(--muted-strong);
+  font-size: 11px;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.meta-icon {
+  flex: 0 0 auto;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.customer-mascot {
+  width: 52px;
+  align-self: center;
+}
+
+/* 次の一手は行ごと押せるようにし、カードのどこを押せば進むかを一目で示す */
+.customer-action {
+  display: flex;
+  width: 100%;
+  min-height: 46px;
+  align-items: center;
+  gap: 8px;
+  padding: 0 14px;
+  border-top: 1px solid var(--line);
+  background: transparent;
+  color: var(--accent-strong);
+  font-size: 13px;
+  font-weight: 820;
+  text-align: left;
+}
+
+.customer-action .meta-icon {
+  color: var(--accent-strong);
+}
+
+.customer-action-label {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.customer-action .chevron {
+  color: var(--muted);
+}
+
+.inbox-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 13px 14px;
+}
+
+.inbox-mascot-wrap {
+  position: relative;
+  flex: 0 0 auto;
+}
+
+.inbox-mascot {
+  width: 58px;
+}
+
+.count-badge.floating {
+  position: absolute;
+  top: -4px;
+  right: -6px;
+}
+
+.inbox-copy {
+  min-width: 0;
+  flex: 1;
+}
+
+.inbox-name {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin: 6px 0 0;
+  color: var(--muted-strong);
+  font-size: 12px;
+  font-weight: 780;
+}
+
+.status-pill.info {
+  color: var(--success);
+  background: var(--success-soft);
 }

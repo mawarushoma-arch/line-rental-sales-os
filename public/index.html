@@ -3,9 +3,8 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-    <meta name="color-scheme" content="dark" />
-    <meta name="theme-color" content="#101114" media="(prefers-color-scheme: light)" />
-    <meta name="theme-color" content="#0B0C0E" media="(prefers-color-scheme: dark)" />
+    <meta name="color-scheme" content="light" />
+    <meta name="theme-color" content="#FFFFFF" />
     <meta
       name="description"
       content="ROOM PILOTは、顧客・物件・内見・案件の次の一手をLINEから迷わず進める賃貸営業OSです。"
@@ -41,7 +40,10 @@
           </div>
         </div>
         <div class="topbar-actions">
-          <span class="mock-badge">モック</span>
+          <button class="user-chip" type="button" data-action="open-account" aria-haspopup="menu" aria-expanded="false">
+            <span>佐藤</span>
+            <span class="user-chip-caret" aria-hidden="true">⌄</span>
+          </button>
           <span class="user-avatar" aria-label="ログイン中：佐藤">佐</span>
         </div>
       </header>
