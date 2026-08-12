@@ -171,9 +171,10 @@ test("JSが3権限状態とスワイプ・Undo・ローカル保存を備える"
   assert.match(js, /pointerdown/i);
   assert.match(js, /pointermove/i);
   assert.match(js, /swipe/i);
-  assert.match(js, /(?:0?\.28\b|28\s*\/\s*100|28\s*%)/i);
+  // カード幅・高さに対する比でスワイプ成立を判定する（横=前後送り／下=保存）
+  assert.match(js, /0?\.2[0-9]\b/, "スワイプ成立のしきい値が必要です");
   assert.match(js, /undo/i);
-  assert.match(js, /(?:5_?000\b|5e3\b|5\s*\*\s*1_?000)/i);
+  assert.match(js, /UNDO_SECONDS\s*=\s*\d+/, "Undoの猶予秒を定数で持つ必要があります");
 
   assert.match(js, /localStorage/);
   assert.match(js, /\.getItem\s*\(/);

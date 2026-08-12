@@ -1,0 +1,13 @@
+# スマホ実機で確認するための配信設定。
+# 静的ファイルは dist/client をそのまま配り、/api/health と /api/mock/bootstrap だけ
+# dist/server/index.js（Worker）が返す。どちらも npm run build で生成する。
+name = "room-pilot"
+main = "dist/server/index.js"
+compatibility_date = "2026-08-12"
+
+[assets]
+directory = "./dist/client"
+binding = "ASSETS"
+
+[observability]
+enabled = true

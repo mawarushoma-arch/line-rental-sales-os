@@ -166,6 +166,7 @@ import {
   const PROPERTY_FIELD_KEYS = ["listing", "ad", "rent", "management", "address", "viewing", "moveIn", "initialCost", "note"];
   const REDUCED_MOTION = window.matchMedia("(prefers-reduced-motion: reduce)");
   const MOCK_NOW = Date.parse("2026-08-11T11:20:00+09:00");
+  const UNDO_SECONDS = 8;
 
   const propertySeeds = [
     ["中目黒リバーサイド", "中目黒駅 徒歩6分・1LDK 38.2㎡", 18.2, 1.2, "photo-1522708323590-d24dbb6b0267"],
@@ -421,6 +422,8 @@ import {
     publicNote: index % 3 === 0 ? "短期解約違約金あり。先行申込相談可。" : index % 3 === 1 ? "退去前。写真は同タイプ別部屋です。" : "保証会社利用必須。法人契約相談可。",
     internal: {
       ad: index % 4 === 0 ? "AD 200" : index % 3 === 0 ? "AD 150" : index % 2 === 0 ? "AD 100" : "AD 50",
+      // 暗証番号そのものはモックでも持たせない（画面へ出す経路を作らないため）
+      keyInfo: index % 3 === 0 ? "社内キーボックス・暗証情報は表示しません" : index % 3 === 1 ? "現地キーボックス・管理会社へ事前連絡" : "管理会社預かり・当日受取",
       managementCompanyNote: index % 5 === 0 ? "元付へ事前確認" : "特記事項なし",
     },
   }));
@@ -652,7 +655,9 @@ import {
     preferenceDraft: null,
     sentReplies: new Map(),
     replyPending: false,
-    propertyStackObserver: null,
+    deckCursor: 0,
+    deckSlide: null,
+    suppressCardClick: false,
   };
   const replyGateway = new MockApprovedReplyGateway();
   let undoTimer = 0;
@@ -726,6 +731,14 @@ import {
     return `${Math.round(Number(value) || 0).toLocaleString("ja-JP")}円`;
   }
 
+  // カード表面は桁を読ませず一目で比べたいので万円表記にする。詳細シートは円表記のまま。
+  function manYen(value) {
+    const amount = Number(value);
+    if (!Number.isFinite(amount)) return "賃料 未確認";
+    const man = amount / 10_000;
+    return `${Number.isInteger(man) ? man : man.toFixed(1)}万円`;
+  }
+
   function dateParts(iso) {
     const date = new Date(iso);
     if (!Number.isFinite(date.getTime())) return null;
@@ -792,6 +805,15 @@ import {
     );
   }
 
+  /**
+   * 鮮度警告は物件画面だけでなく、空室・鍵を実際に扱う今日／内見でも同じ文言で出す。
+   * 重要操作の直前に警告する方針（docs/architecture.md 6章）に合わせるため。
+   */
+  function renderFreshnessWarning(copy) {
+    if (!adapterState.stale) return "";
+    return `<div class="freshness-warning" role="status"><strong>情報が古い可能性があります</strong><span>${escapeHTML(copy)}</span></div>`;
+  }
+
   function showToast(message, duration = 2300) {
     if (runtime.undo) clearUndoToast();
     window.clearTimeout(toastTimer);
@@ -815,12 +837,13 @@ import {
     window.clearTimeout(undoTimer);
     window.clearInterval(undoInterval);
     const verb = action === "liked" ? "候補に保存しました" : "スキップしました";
-    let remaining = 5;
+    // 連続で仕分けている最中でも押し切れるよう、猶予は8秒とる。
+    let remaining = UNDO_SECONDS;
     const draw = () => {
       toastRegion.innerHTML = `
         <div class="toast">
           <span>「${escapeHTML(property.name)}」を${verb}${storageFailed ? " · 端末保存なし" : ""}</span>
-          <button class="toast-button" type="button" data-action="undo-decision" aria-label="5秒以内に直前の判断を元に戻す">元に戻す <span data-undo-countdown aria-hidden="true">（${remaining}秒）</span></button>
+          <button class="toast-button" type="button" data-action="undo-decision" aria-label="${UNDO_SECONDS}秒以内に直前の判断を元に戻す">元に戻す <span data-undo-countdown aria-hidden="true">（${remaining}秒）</span></button>
         </div>`;
     };
     draw();
@@ -829,7 +852,7 @@ import {
       const countdown = toastRegion.querySelector("[data-undo-countdown]");
       if (remaining > 0 && runtime.undo && countdown) countdown.textContent = `（${remaining}秒）`;
     }, 1000);
-    undoTimer = window.setTimeout(clearUndoToast, 5000);
+    undoTimer = window.setTimeout(clearUndoToast, UNDO_SECONDS * 1000);
   }
 
   function renderApp({ focusMain = false, focusSelector = null } = {}) {
@@ -840,9 +863,8 @@ import {
       viewings: renderViewings,
       cases: renderCases,
     };
-    runtime.propertyStackObserver?.disconnect();
-    runtime.propertyStackObserver = null;
     appView.innerHTML = renderers[state.activeTab]();
+    document.body.classList.toggle("deck-mode", state.activeTab === "properties");
     document.querySelectorAll("[data-tab]").forEach((button) => {
       if (button.dataset.tab === state.activeTab) button.setAttribute("aria-current", "page");
       else button.removeAttribute("aria-current");
@@ -858,9 +880,15 @@ import {
     closeModal();
     state.activeTab = tab;
     const saved = persistState();
-    window.scrollTo({ top: 0, behavior: REDUCED_MOTION.matches ? "auto" : "smooth" });
     renderApp({ focusMain: true });
+    // 先に描画してから先頭へ戻す。smoothだと入れ替え中に中断され、前の画面のスクロール量が残る。
+    scrollViewToTop();
     if (!saved) showToast("この端末では現在地を保存できませんでした");
+  }
+
+  function scrollViewToTop() {
+    window.scrollTo({ top: 0, behavior: "auto" });
+    window.requestAnimationFrame(() => window.scrollTo({ top: 0, behavior: "auto" }));
   }
 
   function renderToday() {
@@ -934,6 +962,7 @@ import {
           </div>
           <p class="date-chip">8月11日 火</p>
         </header>
+        ${renderFreshnessWarning("空室・鍵・金額は、提案と内見の前に再確認してください")}
 
         <div class="summary-grid" aria-label="本日の概要">
           <div class="metric-card"><span class="metric-label">優先アクション</span><strong class="metric-value">${priorities.length}<span class="metric-unit">件</span></strong></div>
@@ -1079,33 +1108,58 @@ import {
       : orderedProperties.filter((property) => statuses.get(property.id) === "unreviewed");
     const likedCount = [...statuses.values()].filter((status) => status === "liked").length;
     const skippedCount = [...statuses.values()].filter((status) => status === "skipped").length;
-    const cards = remaining.slice(0, 3);
-    const handledCount = Property.length - remaining.length;
+    // 横スワイプは判断せず前後へ送るだけなので、いま見ている位置を保持する。
+    const cursor = clampDeckCursor(remaining.length);
+    const current = remaining[cursor];
+    const previous = remaining[cursor - 1];
+    const next = remaining[cursor + 1];
     return `
-      <section class="view" aria-labelledby="properties-title">
+      <section class="view deck-screen" aria-labelledby="properties-title">
         <div class="selected-customer-bar" aria-label="選択中の顧客">
           <div class="selection-copy"><span class="selection-dot" aria-hidden="true"></span><div><span class="selection-label">この顧客に提案</span><strong class="selection-name">${escapeHTML(selected.name)}</strong></div></div>
           <button class="ghost-button compact-button" type="button" data-action="go-customers">変更</button>
         </div>
-        <header class="view-header">
-          <div><p class="eyebrow">PROPERTY MATCH</p><h1 id="properties-title" class="page-title">物件を選ぶ</h1></div>
+        <header class="deck-header">
+          <h1 id="properties-title" class="deck-title">候補カード <span class="deck-count">${remaining.length}</span></h1>
           <button class="ghost-button compact-button" type="button" data-action="edit-preference" data-preference="propertyFields">表示項目</button>
         </header>
-        ${adapterState.stale ? '<div class="freshness-warning" role="status"><strong>情報が古い可能性があります</strong><span>空室・鍵・金額は提案前に再確認してください</span></div>' : ""}
-        <div class="property-progress"><span>${remaining.length} / ${Property.length}件 未確認</span><span>保存 ${likedCount} · Skip ${skippedCount}</span></div>
-        ${cards.length ? `
-          <div class="property-stack" aria-live="polite">
-            ${[...cards].reverse().map((property, reverseIndex) => {
-              const index = cards.length - 1 - reverseIndex;
-              return renderPropertyCard(property, index, index === 0, selected.id, handledCount + index + 1);
-            }).join("")}
+        ${renderFreshnessWarning("空室・鍵・金額は提案前に再確認してください")}
+        ${current ? `
+          <div class="deck-stage" data-deck-stage aria-live="polite">
+            ${previous ? renderPropertyCard(previous, "prev", selected.id) : ""}
+            ${next ? renderPropertyCard(next, "next", selected.id) : ""}
+            ${renderPropertyCard(current, "current", selected.id)}
           </div>
-          <div class="swipe-controls" aria-label="物件の判断">
-            <button class="swipe-action skip" type="button" data-action="property-skip" data-id="${cards[0].id}"><span aria-hidden="true">←</span> Skip</button>
-            <button class="swipe-action like" type="button" data-action="property-like" data-id="${cards[0].id}" ${cards[0].listingStatus === "募集終了" ? "disabled" : ""}><span aria-hidden="true">♡</span> ${cards[0].listingStatus === "募集終了" ? "募集終了" : "顧客候補へ保存"}</button>
+          <div class="deck-tray" data-deck-tray>
+            <button class="tray-side" type="button" data-action="property-skip" data-id="${current.id}" aria-label="この物件をSkipする">Skip</button>
+            <button class="tray-deck" type="button" data-action="review-candidates" data-id="${selected.id}"><span aria-hidden="true">↑</span> 保存済み · ${likedCount}</button>
+            <button class="tray-side save" type="button" data-action="property-like" data-id="${current.id}" ${current.listingStatus === "募集終了" ? "disabled" : ""} aria-label="${current.listingStatus === "募集終了" ? "募集終了のため保存できません" : "この物件を候補へ保存する"}">${current.listingStatus === "募集終了" ? "終了" : "保存"}</button>
           </div>
-          <p class="swipe-hint">左へSkip · 右へLike　縦方向はそのままスクロールできます</p>` : adapterState.empty ? renderPropertyNoResults(selected) : renderPropertyEmpty(selected, { liked: likedCount, skipped: skippedCount })}
+          <p class="deck-hint">カードを下へスワイプで保存 · 左右で前後の候補 · タップで詳細</p>
+          <p class="deck-position">${cursor + 1} / ${remaining.length}件目　Skip ${skippedCount}件</p>` : adapterState.empty ? renderPropertyNoResults(selected) : renderPropertyEmpty(selected, { liked: likedCount, skipped: skippedCount })}
       </section>`;
+  }
+
+  function clampDeckCursor(length) {
+    if (length <= 0) {
+      runtime.deckCursor = 0;
+      return 0;
+    }
+    runtime.deckCursor = Math.max(0, Math.min(runtime.deckCursor, length - 1));
+    return runtime.deckCursor;
+  }
+
+  function moveDeckCursor(step) {
+    const selected = customerById(state.selectedCustomerId);
+    if (!selected || runtime.decisionPending) return;
+    const remaining = matchingPropertiesForCustomer(selected.id).filter(
+      (property) => effectiveStatusForProperty(selected.id, property.id) === "unreviewed",
+    );
+    const nextCursor = runtime.deckCursor + step;
+    if (nextCursor < 0 || nextCursor > remaining.length - 1) return;
+    runtime.deckCursor = nextCursor;
+    runtime.deckSlide = step > 0 ? "next" : "prev";
+    renderApp();
   }
 
   function renderPropertyField(field, property, index) {
@@ -1127,33 +1181,61 @@ import {
     return `<div class="property-data${wide ? " wide" : ""}${index === 0 ? " emphasized" : ""}"><span class="detail-label">${value[0]}${index === 0 ? " · 強調" : ""}</span><strong class="detail-value${statusClass}">${escapeHTML(value[1])}</strong></div>`;
   }
 
-  function renderPropertyCard(property, index, isTop, customerId, absolutePosition) {
-    const scales = [1, 0.96, 0.92];
-    const offsets = [0, 12, 22];
+  /**
+   * カード表面は要点だけに絞る（物件名・賃料・間取り・募集状況・駅徒歩・一致率・鮮度）。
+   * 賃料以外の金額、AD、備考、合う理由は詳細シートへ送り、面を写真で使い切る。
+   */
+  function renderPropertyCard(property, slot, customerId) {
+    const isCurrent = slot === "current";
     const candidate = candidateByIds(customerId, property.id);
     const stale = propertyIsStale(property);
+    const [walk, layout] = String(property.address).split("・");
+    const statusTone = property.listingStatus === "募集終了" ? "urgent" : property.listingStatus === "申込あり" ? "warning" : "success";
     return `
-      <article class="property-card ${isTop ? "top-card" : ""}" data-property-card data-property-id="${property.id}" data-listing-status="${property.listingStatus}" style="--stack-scale:${scales[index]};--stack-y:${offsets[index]}px;--stack-z:${3 - index}" ${isTop ? 'aria-label="現在の候補物件"' : 'aria-hidden="true"'}>
-        <span class="swipe-badge like" aria-hidden="true">LIKE</span>
-        <span class="swipe-badge skip" aria-hidden="true">SKIP</span>
-        <div class="property-image">
-          <img src="${escapeHTML(property.imageUrl)}" alt="${escapeHTML(property.name)}の室内写真" loading="${isTop ? "eager" : "lazy"}" referrerpolicy="no-referrer" draggable="false" />
-          <span class="image-scrim" aria-hidden="true"></span>
+      <article class="property-card deck-card ${slot} ${isCurrent ? "top-card" : ""}" data-property-card data-property-slot="${slot}" data-property-id="${property.id}" data-listing-status="${property.listingStatus}" ${isCurrent ? 'aria-label="現在の候補物件"' : 'aria-hidden="true"'}>
+        <img class="card-photo" src="${escapeHTML(property.imageUrl)}" alt="${escapeHTML(property.name)}の室内写真" loading="${isCurrent ? "eager" : "lazy"}" referrerpolicy="no-referrer" draggable="false" />
+        <span class="card-scrim" aria-hidden="true"></span>
+        <span class="swipe-badge save" aria-hidden="true">保存</span>
+        <div class="card-top">
           <span class="match-badge">一致率 ${clampPercent(candidate?.matchScore)}%</span>
-          <div class="image-status"><span class="image-status-main ${stale ? "stale" : ""}">${escapeHTML(property.listingStatus)} ${escapeHTML(listedDate(property.listedAt))} · 更新 ${escapeHTML(relativeSourceTime(property.sourceUpdatedAt))}${stale ? " ⚠" : ""}</span><span class="image-counter">${absolutePosition} / ${Property.length}</span></div>
+          <span class="freshness-chip ${stale ? "stale" : ""}">${stale ? "⚠ " : ""}更新 ${escapeHTML(relativeSourceTime(property.sourceUpdatedAt))}</span>
         </div>
-        <div class="property-content">
-          <div class="property-title-row">
-            <div><h2 class="property-name">${escapeHTML(property.name)}</h2><p class="property-location">顧客別の条件照合結果</p></div>
-            <span class="status-pill ${property.listingStatus === "募集終了" ? "urgent" : property.listingStatus === "申込あり" ? "warning" : "success"}">${escapeHTML(property.listingStatus)}</span>
-          </div>
-          <div class="property-data-grid">
-            ${state.displayPreference.propertyFields.map((field, fieldIndex) => renderPropertyField(field, property, fieldIndex)).join("")}
-          </div>
-          <div class="match-reason">合う理由：${(candidate?.matchReasons || []).map(escapeHTML).join("・")}</div>
-          ${stale ? '<p class="property-note stale-note">情報の鮮度が基準を超えています。空室再確認後に提案してください。</p>' : ""}
+        <div class="card-foot">
+          <span class="status-pill ${statusTone}">${escapeHTML(property.listingStatus)}</span>
+          <h2 class="card-name">${escapeHTML(property.name)}</h2>
+          <p class="card-price">${escapeHTML(manYen(property.rentYen))}<span class="card-layout"> / ${escapeHTML(layout || "間取り 未確認")}</span></p>
+          <p class="card-walk">${escapeHTML(walk || "所在 未確認")}　内見 ${escapeHTML(property.viewingAvailable)}</p>
         </div>
+        ${isCurrent ? `<button class="card-open" type="button" data-action="open-property-detail" data-id="${property.id}" aria-label="${escapeHTML(property.name)}の詳細を開く"><span class="card-open-label">タップで詳細</span></button>` : ""}
       </article>`;
+  }
+
+  function openPropertyDetail(propertyId) {
+    const property = propertyById(propertyId);
+    const customer = customerById(state.selectedCustomerId);
+    if (!property || !customer) return;
+    const candidate = candidateByIds(customer.id, property.id);
+    const stale = propertyIsStale(property);
+    const sold = property.listingStatus === "募集終了";
+    const content = `
+      <header class="sheet-header"><div><p class="eyebrow">PROPERTY DETAIL</p><h2 id="property-detail-title" class="sheet-title">${escapeHTML(property.name)}</h2><p class="sheet-subtitle">${escapeHTML(property.listingStatus)} ${escapeHTML(listedDate(property.listedAt))} · 更新 ${escapeHTML(relativeSourceTime(property.sourceUpdatedAt))}</p></div><button class="icon-button" type="button" data-action="close-modal" aria-label="閉じる">×</button></header>
+      <div class="sheet-content">
+        ${stale ? '<div class="freshness-warning" role="status"><strong>情報の鮮度が基準を超えています</strong><span>空室再確認のうえで提案してください</span></div>' : ""}
+        <div class="property-data-grid">
+          ${PROPERTY_FIELD_KEYS.map((field, fieldIndex) => renderPropertyField(field, property, fieldIndex + 1)).join("")}
+        </div>
+        <div class="match-reason">合う理由：${(candidate?.matchReasons || []).map(escapeHTML).join("・") || "未算出"}</div>
+        <section class="detail-section" aria-labelledby="internal-title">
+          <div class="detail-section-head"><h3 id="internal-title" class="detail-section-title">社内限定</h3><span class="mini-badge">顧客返信には含めません</span></div>
+          <p class="small-copy">鍵：${escapeHTML(property.internal.keyInfo)}</p>
+          <p class="small-copy">管理会社：${escapeHTML(property.internal.managementCompanyNote)}</p>
+        </section>
+      </div>
+      <footer class="sheet-footer">
+        <button class="ghost-button" type="button" data-action="property-skip" data-id="${property.id}">Skip</button>
+        <button class="primary-button" type="button" data-action="property-like" data-id="${property.id}" ${sold ? "disabled" : ""}>${sold ? "募集終了" : "候補へ保存"}</button>
+      </footer>`;
+    openSheet(content, "property-detail-title");
   }
 
   function renderPropertyEmpty(selected, decisions) {
@@ -1170,6 +1252,7 @@ import {
     return `
       <section class="view" aria-labelledby="viewings-title">
         <header class="view-header"><div><p class="eyebrow">VIEWING DESK</p><h1 id="viewings-title" class="page-title">内見</h1></div><span class="date-chip">${filtered.length}組</span></header>
+        ${renderFreshnessWarning("空室と鍵は、出発前に管理会社へ再確認してください")}
         <div class="segmented-control" aria-label="内見期間">
           <button class="segmented-button" type="button" data-action="viewing-range" data-range="today" aria-pressed="${runtime.viewingRange === "today"}">今日</button>
           <button class="segmented-button" type="button" data-action="viewing-range" data-range="week" aria-pressed="${runtime.viewingRange === "week"}">今週</button>
@@ -1414,29 +1497,37 @@ import {
     showToast(saved ? "直前の判断を元に戻しました" : "元に戻しましたが、端末へ保存できませんでした");
   }
 
+  /**
+   * デッキの操作。横は判断せず前後の候補へ送るだけ、下は候補へ保存する。
+   * Skipは判断が消えると取り返しにくいので、ジェスチャーではなくトレイのボタンに置く。
+   */
   function attachSwipeInteractions() {
-    const card = appView.querySelector(".top-card[data-property-card]");
-    if (!card) return;
-    const stack = card.closest(".property-stack");
-    const syncStackHeight = () => {
-      if (stack?.isConnected && card.isConnected) {
-        stack.style.height = `${Math.max(620, Math.ceil(card.getBoundingClientRect().height + 28))}px`;
+    const stage = appView.querySelector("[data-deck-stage]");
+    const card = stage?.querySelector(".top-card[data-property-card]");
+    if (!stage || !card) return;
+
+    if (runtime.deckSlide) {
+      const from = runtime.deckSlide;
+      runtime.deckSlide = null;
+      if (!REDUCED_MOTION.matches) {
+        card.classList.add(from === "next" ? "is-entering-left" : "is-entering-right");
+        window.setTimeout(() => card.classList.remove("is-entering-left", "is-entering-right"), 220);
       }
-    };
-    window.requestAnimationFrame(syncStackHeight);
-    if (typeof ResizeObserver === "function") {
-      runtime.propertyStackObserver = new ResizeObserver(syncStackHeight);
-      runtime.propertyStackObserver.observe(card);
     }
+
+    const cards = [...stage.querySelectorAll("[data-property-card]")];
     let gesture = null;
 
-    const resetCard = () => {
-      card.classList.remove("is-dragging");
-      card.style.removeProperty("--drag-x");
-      card.style.removeProperty("--drag-rotation");
-      card.querySelectorAll(".swipe-badge").forEach((badge) => {
-        badge.style.opacity = "0";
+    const resetStage = () => {
+      stage.classList.remove("is-dragging");
+      cards.forEach((item) => {
+        item.style.removeProperty("--drag-x");
+        item.style.removeProperty("--drag-y");
+        item.style.removeProperty("--drag-scale");
       });
+      const badge = card.querySelector(".swipe-badge.save");
+      if (badge) badge.style.opacity = "0";
+      appView.querySelector("[data-deck-tray]")?.classList.remove("is-target");
     };
 
     card.addEventListener("pointerdown", (event) => {
@@ -1448,10 +1539,8 @@ import {
         startY: event.clientY,
         startTime: event.timeStamp,
         dx: 0,
+        dy: 0,
         axis: null,
-        lastX: event.clientX,
-        lastTime: event.timeStamp,
-        velocityX: 0,
       };
     });
 
@@ -1461,65 +1550,68 @@ import {
       const dy = event.clientY - gesture.startY;
       const absX = Math.abs(dx);
       const absY = Math.abs(dy);
-      if (!gesture.axis && Math.max(absX, absY) >= 8) {
-        if (absX >= absY * 1.3) gesture.axis = "horizontal";
-        else if (absY >= absX * 1.3) gesture.axis = "vertical";
-        else if (Math.max(absX, absY) < 16) return;
-        else gesture.axis = absX > absY ? "horizontal" : "vertical";
-        if (gesture.axis === "horizontal") {
-          card.setPointerCapture?.(event.pointerId);
-          card.classList.add("is-dragging");
-        }
+      if (!gesture.axis) {
+        if (Math.max(absX, absY) < 10) return;
+        gesture.axis = absX >= absY ? "horizontal" : "vertical";
+        card.setPointerCapture?.(event.pointerId);
+        stage.classList.add("is-dragging");
       }
-      if (gesture.axis !== "horizontal") return;
       event.preventDefault();
       gesture.dx = dx;
-      const segmentTime = Math.max(1, event.timeStamp - gesture.lastTime);
-      gesture.velocityX = (event.clientX - gesture.lastX) / segmentTime;
-      gesture.lastX = event.clientX;
-      gesture.lastTime = event.timeStamp;
+      gesture.dy = dy;
       const width = Math.max(card.getBoundingClientRect().width, 1);
-      const rotation = Math.max(-8, Math.min(8, (dx / width) * 8));
-      const progress = Math.min(1, Math.abs(dx) / (width * 0.28));
-      card.style.setProperty("--drag-x", `${dx}px`);
-      card.style.setProperty("--drag-rotation", `${rotation}deg`);
-      card.querySelector(".swipe-badge.like").style.opacity = dx > 0 ? String(progress) : "0";
-      card.querySelector(".swipe-badge.skip").style.opacity = dx < 0 ? String(progress) : "0";
+      const height = Math.max(card.getBoundingClientRect().height, 1);
+      if (gesture.axis === "horizontal") {
+        cards.forEach((item) => item.style.setProperty("--drag-x", `${dx}px`));
+        return;
+      }
+      // 上方向へは動かさない（保存の取り消しに見えるため）
+      const pulled = Math.max(0, dy);
+      const progress = Math.min(1, pulled / (height * 0.22));
+      card.style.setProperty("--drag-y", `${pulled}px`);
+      card.style.setProperty("--drag-scale", String(1 - progress * 0.06));
+      const badge = card.querySelector(".swipe-badge.save");
+      if (badge) badge.style.opacity = String(progress);
+      appView.querySelector("[data-deck-tray]")?.classList.toggle("is-target", progress >= 1);
+      void width;
     });
 
     const finish = (event) => {
       if (!gesture || gesture.pointerId !== event.pointerId) return;
       const current = gesture;
       gesture = null;
-      if (current.axis !== "horizontal") {
-        resetCard();
+      if (!current.axis) {
+        resetStage();
         return;
       }
-      const width = Math.max(card.getBoundingClientRect().width, 1);
-      current.dx = event.clientX - current.startX;
+      runtime.suppressCardClick = true;
+      const rect = card.getBoundingClientRect();
       const elapsed = Math.max(16, event.timeStamp - current.startTime);
-      const averageSpeed = Math.abs(current.dx) / elapsed;
-      const velocityMatchesDirection = Math.sign(current.velocityX) === Math.sign(current.dx);
-      const speed = Math.max(averageSpeed, velocityMatchesDirection ? Math.abs(current.velocityX) : 0);
-      const passedDistance = Math.abs(current.dx) >= width * 0.28;
-      const passedSpeed = speed >= 0.55 && Math.abs(current.dx) >= 22;
-      if (passedDistance || passedSpeed) {
-        if (current.dx > 0 && card.dataset.listingStatus === "募集終了") {
-          resetCard();
-          showToast("募集終了のため候補へ保存できません");
-          return;
-        }
-        animatePropertyDecision(current.dx > 0 ? "liked" : "skipped", card.dataset.propertyId);
-      } else {
-        resetCard();
+      if (current.axis === "horizontal") {
+        const passed = Math.abs(current.dx) >= rect.width * 0.24 || (Math.abs(current.dx) / elapsed >= 0.5 && Math.abs(current.dx) >= 24);
+        resetStage();
+        if (passed) moveDeckCursor(current.dx < 0 ? 1 : -1);
+        return;
       }
+      const passed = current.dy >= rect.height * 0.22 || (current.dy / elapsed >= 0.5 && current.dy >= 40);
+      if (!passed) {
+        resetStage();
+        return;
+      }
+      if (card.dataset.listingStatus === "募集終了") {
+        resetStage();
+        showToast("募集終了のため候補へ保存できません");
+        return;
+      }
+      resetStage();
+      animatePropertyDecision("liked", card.dataset.propertyId);
     };
 
     card.addEventListener("pointerup", finish);
     card.addEventListener("pointercancel", (event) => {
       if (!gesture || gesture.pointerId !== event.pointerId) return;
       gesture = null;
-      resetCard();
+      resetStage();
     });
   }
 
@@ -1613,11 +1705,14 @@ import {
     }
     if (action === "select-customer") {
       if (runtime.undo) clearUndoToast();
+      const changed = state.selectedCustomerId !== id;
       state.selectedCustomerId = id;
       state.activeTab = "properties";
+      if (changed) runtime.deckCursor = 0;
       const saved = persistState();
       closeModal();
       renderApp({ focusMain: true });
+      scrollViewToTop();
       if (!saved) showToast("選択した顧客をこの端末へ保存できませんでした");
     }
     if (action === "complete-today-action") {
@@ -1631,8 +1726,15 @@ import {
       renderApp({ focusSelector: `[data-action="complete-today-action"][data-id="${CSS.escape(id)}"]` });
       showToast(runtime.completedTodayActions.has(id) ? "完了にしました" : "未完了に戻しました");
     }
-    if (action === "property-like") animatePropertyDecision("liked", id);
-    if (action === "property-skip") animatePropertyDecision("skipped", id);
+    if (action === "open-property-detail") {
+      // ドラッグの直後に発火するclickは詳細を開かない
+      if (runtime.suppressCardClick) runtime.suppressCardClick = false;
+      else openPropertyDetail(id);
+    }
+    if (action === "property-like" || action === "property-skip") {
+      closeModal();
+      animatePropertyDecision(action === "property-like" ? "liked" : "skipped", id);
+    }
     if (action === "undo-decision") undoLastDecision();
     if (action === "relax-condition") {
       const customer = customerById(state.selectedCustomerId);

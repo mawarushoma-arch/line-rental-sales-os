@@ -40,3 +40,6 @@ next-env.d.ts
 /.wrangler/
 /outputs/
 /work/
+
+# 参考にした他社アプリの画面録画。手元の参照用に置くだけで、リポジトリへは入れない
+/UI/
