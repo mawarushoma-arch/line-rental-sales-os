@@ -1350,7 +1350,7 @@ import {
       <div class="sheet-content">
         <div class="checkbox-list">
           ${DECK_FILTERS.map((filter) => `
-            <button class="filter-row ${runtime.deckFilters[filter.id] ? "on" : ""}" type="button" data-action="toggle-deck-filter" data-filter="${filter.id}" aria-pressed="${runtime.deckFilters[filter.id]}">
+            <button class="filter-toggle ${runtime.deckFilters[filter.id] ? "on" : ""}" type="button" data-action="toggle-deck-filter" data-filter="${filter.id}" aria-pressed="${runtime.deckFilters[filter.id]}">
               <span class="filter-check" aria-hidden="true">${runtime.deckFilters[filter.id] ? "✓" : ""}</span>
               <span class="filter-main"><span class="filter-label">${escapeHTML(filter.label)}</span><span class="filter-copy">${escapeHTML(filter.copy)}</span></span>
             </button>`).join("")}

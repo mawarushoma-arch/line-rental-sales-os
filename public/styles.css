@@ -1007,6 +1007,8 @@ img {
   /* トップバーの下から画面下端まで使い、カードに高さを全部渡す */
   min-height: calc(100dvh - 68px - var(--safe-top));
   flex-direction: column;
+  /* 画面ぴったりに組むので、入場アニメの5pxずれでスクロールが生まれないようにする */
+  animation: none;
   /* 画面の端まで暗い面にし、左右に隣のカードの縁を覗かせる */
   margin: -13px calc(-1 * max(13px, var(--safe-right))) calc(-102px - var(--safe-bottom))
     calc(-1 * max(13px, var(--safe-left)));
@@ -1014,6 +1016,302 @@ img {
   padding: 13px max(13px, var(--safe-right)) var(--safe-bottom) max(13px, var(--safe-left));
   background: var(--bg);
   color: var(--text);
+}
+
+/* 仕分け中は画面を広く使いたいので、5タブの固定フッターは出さない。
+   移動導線は右下の .deck-nav が受け持つ（ボタン自体はDOMに残す）。 */
+body.deck-mode .bottom-nav {
+  display: none;
+}
+
+.deck-icon-button {
+  display: grid;
+  width: 40px;
+  height: 40px;
+  place-items: center;
+  border-radius: 14px;
+  background: var(--surface-soft);
+  color: var(--muted-strong);
+  font-size: 13px;
+  letter-spacing: 0.08em;
+}
+
+.deck-chips {
+  display: flex;
+  gap: 8px;
+  margin: 0 0 12px;
+  padding: 2px 2px 4px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.deck-chips::-webkit-scrollbar {
+  display: none;
+}
+
+.deck-chip {
+  position: relative;
+  min-height: 36px;
+  flex: 0 0 auto;
+  padding: 0 14px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--surface-soft);
+  color: var(--muted-strong);
+  font-size: 12px;
+  font-weight: 780;
+  white-space: nowrap;
+}
+
+.deck-chip.on {
+  background: var(--accent);
+  color: var(--accent-text);
+}
+
+.deck-chip.round {
+  display: grid;
+  width: 44px;
+  min-height: 44px;
+  padding: 0;
+  place-items: center;
+  font-size: 18px;
+}
+
+.chip-dot {
+  position: absolute;
+  top: 7px;
+  right: 7px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+
+/* 保存したカードが下に積み上がっていく置き場 */
+.deck-pile {
+  position: relative;
+  height: 92px;
+  margin: 10px calc(-1 * max(13px, var(--safe-right))) 0 calc(-1 * max(13px, var(--safe-left)));
+  transition: transform 160ms ease;
+}
+
+.pile-slab {
+  position: absolute;
+  right: calc(max(13px, var(--safe-right)) - var(--i) * 7px);
+  bottom: 0;
+  left: calc(max(13px, var(--safe-left)) - var(--i) * 7px);
+  z-index: calc(3 - var(--i));
+  height: 74px;
+  overflow: hidden;
+  border-radius: 24px 24px 0 0;
+  box-shadow: 0 -8px 22px rgba(0, 0, 0, 0.34);
+  transform: translateY(calc(var(--i) * -9px));
+}
+
+.pile-slab img {
+  width: 100%;
+  height: 130px;
+  object-fit: cover;
+  opacity: 0.92;
+  pointer-events: none;
+}
+
+.deck-pile.is-empty::before {
+  position: absolute;
+  right: max(13px, var(--safe-right));
+  bottom: 0;
+  left: max(13px, var(--safe-left));
+  height: 62px;
+  border: 1px dashed var(--line-strong);
+  border-bottom: 0;
+  border-radius: 24px 24px 0 0;
+  content: "";
+}
+
+.pile-open {
+  position: absolute;
+  z-index: 6;
+  inset: 0;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+}
+
+.deck-pile.is-target .pile-slab {
+  transform: translateY(calc(var(--i) * -9px - 5px));
+}
+
+/* カード上の判断ボタン。トレイに行を足さずに済ませ、その分カードを大きく取る */
+/* 親指の届く右下を判断ボタンに使う。移動メニューはカードの外（束の上）にある */
+.card-decide {
+  position: absolute;
+  z-index: 4;
+  right: 16px;
+  bottom: 16px;
+  display: flex;
+  gap: 10px;
+}
+
+.icon-glyph {
+  width: 20px;
+  height: 20px;
+}
+
+.card-action {
+  display: grid;
+  width: 52px;
+  height: 52px;
+  place-items: center;
+  border: 1px solid rgba(255, 255, 255, 0.34);
+  border-radius: 50%;
+  background: rgba(18, 19, 22, 0.58);
+  color: #fff;
+  font-size: 19px;
+  backdrop-filter: blur(10px);
+}
+
+.card-action.save {
+  border-color: transparent;
+  background: var(--accent);
+  color: var(--accent-text);
+}
+
+.card-action:disabled {
+  background: rgba(18, 19, 22, 0.5);
+  color: rgba(255, 255, 255, 0.5);
+}
+
+/* 右下メニュー */
+.deck-nav {
+  /* 画面幅ではなく、アプリの列（最大480px）の右下に置く */
+  position: fixed;
+  z-index: 90;
+  bottom: calc(13px + var(--safe-bottom));
+  right: 0;
+  left: 0;
+  display: flex;
+  width: min(100%, 480px);
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 10px;
+  /* transformで中央寄せするとfixedの基準になり、スクリムが縮むのでmarginで寄せる */
+  margin: 0 auto;
+  padding-right: max(13px, var(--safe-right));
+  /* 列いっぱいに広がるので、束やカードへのタップを塞がないようにする */
+  pointer-events: none;
+}
+
+.deck-nav > * {
+  pointer-events: auto;
+}
+
+.deck-nav-scrim {
+  position: fixed;
+  z-index: -1;
+  border: 0;
+  inset: 0;
+  background: rgba(6, 7, 9, 0.5);
+}
+
+.deck-nav-items {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+  animation: deck-menu-in 160ms ease-out;
+}
+
+@keyframes deck-menu-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+}
+
+.deck-nav-item {
+  display: flex;
+  min-height: 44px;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  padding: 0 16px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--surface-raised);
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 800;
+  box-shadow: 0 10px 26px rgba(0, 0, 0, 0.4);
+}
+
+.deck-nav-icon {
+  font-size: 15px;
+  opacity: 0.75;
+}
+
+.deck-fab {
+  display: grid;
+  width: 56px;
+  height: 56px;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--accent);
+  color: var(--accent-text);
+  font-size: 20px;
+  font-weight: 850;
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.44);
+}
+
+/* 絞り込みシート */
+.filter-toggle {
+  display: flex;
+  width: 100%;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: var(--surface);
+  text-align: left;
+}
+
+.filter-toggle.on {
+  border-color: var(--accent);
+  background: var(--surface-tint);
+}
+
+.filter-check {
+  display: grid;
+  width: 24px;
+  height: 24px;
+  flex: 0 0 24px;
+  place-items: center;
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--accent-text);
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.filter-toggle.on .filter-check {
+  border-color: transparent;
+  background: var(--accent);
+}
+
+.filter-main {
+  display: grid;
+  gap: 3px;
+}
+
+.filter-label {
+  font-size: 14px;
+  font-weight: 800;
+}
+
+.filter-copy {
+  color: var(--muted);
+  font-size: 11px;
 }
 
 .deck-header {
