@@ -10,6 +10,7 @@
     "dev": "node scripts/serve.mjs",
     "build": "node scripts/build.mjs",
     "preview:file": "node scripts/build-preview.mjs",
+    "deploy": "npm run build && wrangler deploy",
     "test": "npm run build && npm run preview:file && node --test tests/rendered-html.test.mjs && node tests/browser-smoke.mjs",
     "test:browser": "npm run build && npm run preview:file && node tests/browser-smoke.mjs",
     "lint": "node --check public/app.js && node --check public/domain.mjs && node --check public/api-adapter.mjs && node --check public/model-contract.mjs && node --check scripts/build.mjs && node --check scripts/build-preview.mjs && node --check scripts/serve.mjs && node --check tests/browser-smoke.mjs"

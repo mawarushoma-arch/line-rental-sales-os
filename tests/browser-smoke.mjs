@@ -307,13 +307,19 @@ async function run() {
     );
   };
 
-  const selectCustomer = async (customerId = "c1") => {
+  // 0件モードではカードが出ないので、何を待つかを呼び出し側で選ぶ
+  const selectCustomer = async (customerId = "c1", expect = "card") => {
     await click('[data-tab="customers"]');
     await waitFor("document.querySelector('#customers-title')?.textContent === '顧客'", "customers tab");
     await click(`[data-action="open-customer"][data-id="${customerId}"]`);
     await waitFor("Boolean(document.querySelector('#customer-detail-title'))", "customer detail sheet");
     await click(`[data-action="select-customer"][data-id="${customerId}"]`);
-    await waitFor("Boolean(document.querySelector('.top-card[data-property-card]'))", "property card after customer selection");
+    await waitFor(
+      expect === "empty"
+        ? "Boolean(document.querySelector('.empty-state'))"
+        : "Boolean(document.querySelector('.top-card[data-property-card]'))",
+      `${expect === "empty" ? "empty state" : "property card"} after customer selection`,
+    );
   };
 
   const test = async (name, task) => {
@@ -504,7 +510,7 @@ async function run() {
 
       await navigate("api=empty", 390);
       await waitForApp();
-      await selectCustomer("c1");
+      await selectCustomer("c1", "empty");
       assert.match(await evaluate("document.querySelector('.empty-state')?.textContent || ''"), /条件に合う物件が0件/);
 
       await navigate("api=error", 390);
@@ -531,7 +537,9 @@ async function run() {
       await click('#reply-form button[type="submit"]');
       await waitFor("document.querySelector('#recommend-heading + .recommend-card, .recommend-card')?.textContent.includes('返信済み')", "approved mock reply state");
       assert.match(await evaluate("document.querySelector('.recommend-card').textContent"), /石井さんへ返信済み/);
-      await click('[data-action="open-reply"]');
+      // 送信後は優先アクション側の同じdata-actionが無効化される（未完了へ戻せない仕様）ので、
+      // 記録を開く導線である推奨カードのボタンを指定する
+      await click('.recommend-card [data-action="open-reply"]');
       await waitFor("Boolean(document.querySelector('.success-safety'))", "approved reply record");
       reply = await evaluate("document.querySelector('#modal-root').textContent");
       assert.match(reply, /営業が確認した本文だけ/);
