@@ -2,31 +2,31 @@
   color-scheme: light;
   /* デザインカンプ（UI/）に合わせたライトテーマ。緑は操作、青は確認・情報。 */
   --bg: #ffffff;
-  --bg-soft: #f6f7f8;
+  --bg-soft: #fafafa;
   --surface: #ffffff;
   --surface-raised: #ffffff;
-  --surface-soft: #f4f5f6;
-  --surface-tint: #eafaef;
-  --text: #16181c;
-  --muted: #8a9099;
-  --muted-strong: #5c636c;
-  --line: #ebedf0;
-  --line-strong: #dcdfe3;
-  --accent: #06c755;
-  --accent-strong: #06a648;
+  --surface-soft: #fafafa;
+  --surface-tint: #ecfaef;
+  --text: #0b0b0d;
+  --muted: #757b87;
+  --muted-strong: #414a57;
+  --line: #ecedef;
+  --line-strong: #e0e2e6;
+  --accent: #00ab42;
+  --accent-strong: #00a02c;
   --accent-text: #ffffff;
-  --accent-soft: #e8f8ee;
-  --success: #1f7ae0;
-  --success-soft: #eaf2fe;
-  --danger: #e5484d;
-  --danger-soft: #fdeced;
-  --warning: #d98211;
-  --warning-soft: #fdf3e3;
+  --accent-soft: #ecfaef;
+  --success: #0b4cb4;
+  --success-soft: #edf6fd;
+  --danger: #ee2020;
+  --danger-soft: #fceaea;
+  --warning: #d2560a;
+  --warning-soft: #fef5e9;
   --line-green: #06c755;
   --shadow-card: 0 2px 10px rgba(19, 24, 30, 0.05);
   --shadow-nav: 0 -6px 20px rgba(19, 24, 30, 0.07);
-  --radius-card: 18px;
-  --radius-button: 14px;
+  --radius-card: 16px;
+  --radius-button: 12px;
   --safe-top: env(safe-area-inset-top, 0px);
   --safe-right: env(safe-area-inset-right, 0px);
   --safe-bottom: env(safe-area-inset-bottom, 0px);
@@ -352,7 +352,7 @@ img {
 }
 
 .section {
-  margin-top: 15px;
+  margin-top: 18px;
 }
 
 .section:first-child {
