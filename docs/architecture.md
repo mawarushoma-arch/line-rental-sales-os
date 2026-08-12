@@ -43,6 +43,20 @@
 - Adapterは取得時刻を`fetchedAt`、仕様書にあるデータ更新時刻を`sourceUpdatedAt`として返す。更新時刻が提供されない場合は未確認のままにし、取得時刻で代用しない。欠損、期限超過、API障害を空文字や「確認済み」へ変換しない。
 - 顧客返信生成へ渡す物件データは許可リスト方式にする。`ad`、鍵情報/鍵備考、管理会社備考を含む`Property.internal`と`Viewing.keyNote`は、プロンプトで隠すのではなく送信前のDTO生成段階で除外する。
 
+### Messageモデル（公式LINEのトーク）
+
+| モデル | 主要フィールド | 意味・制約 |
+|---|---|---|
+| `Message` | `id`, `customerId`, `direction`, `body`, `at`, `status`, `lineMessageId?`, `replyToken?` | `direction`は`in`（顧客から）/`out`（営業から）。`status`は`received`/`sent`/`failed`。`replyToken`はサーバー限定で、画面へも顧客返信用DTOへも含めない。 |
+
+## 3-2. LINE Messaging API境界
+
+- **受信**：WebhookはWorkerで受け、`X-Line-Signature`をチャネルシークレットで検証してから保存する。検証失敗は本文を読まずに破棄する。LINEの再送に備え、`webhookEventId`で冪等化する。
+- **送信**：Reply API（受信から短時間・1回だけ）とPush API（時間制限なし・従量）を使い分ける。どちらも**営業の承認記録と本文指紋が一致したときだけ**呼ぶ。承認なしの自動送信・再送は行わない。
+- 生のLINE user IDと`replyToken`はサーバー限定とし、画面・URL・通常ログへ出さない。画面は`customerId`だけで会話を参照する。
+- 送信失敗（レート制限、ブロック、トークン失効）は成功として扱わず、`failed`として画面へ残し、再送は営業の明示操作に限る。
+- 顧客へ渡す本文は許可リスト方式のDTOで作る。`Property.internal`と`Viewing.keyNote`は送信前の生成段階で除外する。
+
 ## 4. AIと顧客送信
 
 - AIが扱う事実には`confirmed`（確定）/`inferred`（推定）/`unknown`（未確認）を保持し、画面と返信下書きで区別する。根拠がない値を確定へ昇格させない。

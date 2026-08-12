@@ -618,6 +618,34 @@ import {
     ...Viewing.map((viewing) => viewing.keyNote),
   ];
 
+  /**
+   * 公式LINEのトーク。direction は in=顧客から / out=営業から。
+   * 本番はWebhookで受けた本文をサーバーへ保存し、この形へ正規化して配る。
+   * 送信も同じくサーバー経由で、営業の承認記録が揃ったときだけMessaging APIを呼ぶ。
+   */
+  const talkSeeds = {
+    c1: [
+      ["in", "09:42", "ありがとうございます。日当たりも重視したいです。"],
+      ["out", "09:48", "承知しました。仕事スペースも含めて候補を整理します。"],
+      ["in", "10:05", "週末の午前なら内見できます。"],
+    ],
+    c2: [["in", "11:16", "はじめまして。9月上旬までに引っ越したいのですが、相談できますか？"]],
+    c3: [
+      ["in", "10:02", "三軒茶屋あたりで探しています。収納が多い部屋が希望です。"],
+      ["out", "10:14", "承知しました。本日13:30の内見枠を確保しています。"],
+    ],
+    c4: [
+      ["out", "昨日 18:20", "初期費用の明細をお送りします。ご確認ください。"],
+      ["in", "昨日 21:05", "ありがとうございます。明日確認します。"],
+    ],
+  };
+  const INCOMING_SAMPLES = [
+    "先ほどの物件、駅からの道は明るいですか？",
+    "内見は土曜の午前でも大丈夫でしょうか。",
+    "初期費用はもう少し抑えられますか？",
+    "ペット可の物件も見てみたいです。",
+  ];
+
   function createDefaultState() {
     return {
       version: APP_VERSION,
@@ -692,6 +720,22 @@ import {
     deckSort: "match",
     deckFilters: { hideClosed: false, viewableToday: false, hideStale: false },
     deckMenuOpen: false,
+    talks: new Map(
+      Object.entries(talkSeeds).map(([customerId, rows]) => [
+        customerId,
+        rows.map(([direction, at, body], index) => ({
+          id: `${customerId}-m${index + 1}`,
+          customerId,
+          direction,
+          at,
+          body,
+          status: direction === "in" ? "received" : "sent",
+        })),
+      ]),
+    ),
+    talkDraft: "",
+    talkCustomerId: null,
+    incomingCount: 0,
   };
   const replyGateway = new MockApprovedReplyGateway();
   let undoTimer = 0;
@@ -1344,6 +1388,59 @@ import {
       </article>`;
   }
 
+  function talkMessages(customerId) {
+    if (!runtime.talks.has(customerId)) runtime.talks.set(customerId, []);
+    return runtime.talks.get(customerId);
+  }
+
+  function replyDraftFor(customer) {
+    return `${customer.name.split(" ")[0]}さま、お問い合わせありがとうございます。ご希望のエリアと入居時期に合うお部屋を整理してお送りします。通勤先の最寄り駅と、ご希望の賃料上限を教えていただけますか？`;
+  }
+
+  /**
+   * 公式LINEのトーク。ここは画面の見え方を確定させるためのモックで、
+   * 送信は端末内の記録に留め、外部のMessaging APIは呼ばない。
+   */
+  function openTalk(customerId) {
+    const customer = customerById(customerId);
+    if (!customer) return;
+    runtime.talkCustomerId = customerId;
+    const messages = talkMessages(customerId);
+    const content = `
+      <header class="sheet-header">
+        <div><p class="eyebrow">LINE TALK</p><h2 id="talk-title" class="sheet-title">${escapeHTML(customer.name)}</h2><p class="sheet-subtitle">公式LINEのトーク · ${escapeHTML(customer.status)}</p></div>
+        <button class="icon-button" type="button" data-action="close-modal" aria-label="閉じる">×</button>
+      </header>
+      <div class="sheet-content talk-content">
+        <div class="reply-safety">モックです。外部のLINEへは送信せず、この端末の記録にだけ残します。</div>
+        <ol class="talk-log">
+          ${messages.map((message) => `
+            <li class="talk-row ${message.direction}">
+              <div class="talk-bubble">${escapeHTML(message.body)}</div>
+              <p class="talk-meta">${escapeHTML(message.at)}${message.direction === "out" ? ` · ${message.status === "sent" ? "送信済み（モック）" : "下書き"}` : " · 受信"}</p>
+            </li>`).join("")}
+        </ol>
+        ${messages.length ? "" : '<p class="small-copy">まだやり取りがありません。</p>'}
+      </div>
+      <form id="talk-form" class="talk-form" data-id="${customer.id}">
+        <div class="talk-tools">
+          <button class="ghost-button compact-button" type="button" data-action="talk-insert-draft" data-id="${customer.id}">AI下書きを入れる</button>
+          <button class="ghost-button compact-button" type="button" data-action="talk-mock-receive" data-id="${customer.id}">受信をテスト</button>
+        </div>
+        <label class="sr-only" for="talk-body">返信本文</label>
+        <textarea id="talk-body" name="body" class="talk-input" rows="3" placeholder="返信を入力（送信前に必ず内容を確認してください）">${escapeHTML(runtime.talkDraft)}</textarea>
+        <div class="talk-send">
+          <p class="tiny-copy">鍵・AD・管理会社メモなどの社内限定情報は送信できません</p>
+          <button class="primary-button" type="submit">確認して送信</button>
+        </div>
+      </form>`;
+    openSheet(content, "talk-title");
+    window.requestAnimationFrame(() => {
+      const log = modalRoot.querySelector(".talk-content");
+      if (log) log.scrollTop = log.scrollHeight;
+    });
+  }
+
   function openDeckFilters() {
     const content = `
       <header class="sheet-header"><div><p class="eyebrow">FILTER</p><h2 id="deck-filter-title" class="sheet-title">絞り込み</h2><p class="sheet-subtitle">仕分けに出す物件を絞ります。判断済みの結果は変わりません</p></div><button class="icon-button" type="button" data-action="close-modal" aria-label="閉じる">×</button></header>
@@ -1525,12 +1622,12 @@ import {
       <header class="sheet-header"><div><p class="eyebrow">CUSTOMER DETAIL</p><h2 id="customer-detail-title" class="sheet-title">${escapeHTML(customer.name)}</h2><p class="sheet-subtitle">${escapeHTML(customer.status)} · 担当 ${escapeHTML(customer.assignedTo || "未割当")}</p></div><button class="icon-button" type="button" data-action="close-modal" aria-label="閉じる">×</button></header>
       <div class="sheet-content">
         <section class="detail-section" aria-labelledby="condition-section-title"><div class="detail-section-head"><h3 id="condition-section-title" class="detail-section-title">AI条件整理</h3><span class="mini-badge">確定 / 推定 / 未確認</span></div><ul class="condition-list">${condition.items.map((item) => `<li class="condition-item"><span class="condition-dot ${item.status}" aria-hidden="true"></span><div><p class="condition-title">${escapeHTML(item.label)} <span class="tag ${item.status === "confirmed" ? "success" : item.status === "inferred" ? "warning" : "neutral"}">${statusLabels[item.status]}</span></p><p class="condition-copy">${escapeHTML(item.value)}</p></div></li>`).join("")}</ul></section>
-        <section class="detail-section" aria-labelledby="line-summary-title"><div class="detail-section-head"><h3 id="line-summary-title" class="detail-section-title">LINE会話と要約</h3><span class="mini-badge">会話から要約</span></div><blockquote class="summary-quote">${escapeHTML(customer.lineSummary)}</blockquote><ol class="conversation-list"><li><time>09:42</time><span>顧客</span><p>ありがとうございます。日当たりも重視したいです。</p></li><li><time>09:48</time><span>営業</span><p>承知しました。仕事スペースも含めて候補を整理します。</p></li><li><time>10:05</time><span>顧客</span><p>週末の午前なら内見できます。</p></li></ol></section>
+        <section class="detail-section" aria-labelledby="line-summary-title"><div class="detail-section-head"><h3 id="line-summary-title" class="detail-section-title">LINE会話と要約</h3><span class="mini-badge">会話から要約</span></div><blockquote class="summary-quote">${escapeHTML(customer.lineSummary)}</blockquote>${talkMessages(customer.id).length ? `<ol class="conversation-list">${talkMessages(customer.id).slice(-3).map((message) => `<li><time>${escapeHTML(message.at)}</time><span>${message.direction === "in" ? "顧客" : "営業"}</span><p>${escapeHTML(message.body)}</p></li>`).join("")}</ol>` : '<p class="small-copy">まだやり取りがありません。</p>'}<button class="ghost-button wide-button" type="button" data-action="open-talk" data-id="${customer.id}" style="margin-top:10px">トークを開いて返信する</button></section>
         <section class="detail-section" aria-labelledby="liked-title"><div class="detail-section-head"><h3 id="liked-title" class="detail-section-title">Like物件</h3><span class="count-badge">${liked.length}</span></div>${liked.length ? `<ul class="liked-list">${liked.slice(0, 3).map((property) => { const candidate = candidateByIds(customer.id, property.id); return `<li class="liked-item"><span class="liked-thumb"><img src="${escapeHTML(property.imageUrl)}" alt="" loading="lazy" referrerpolicy="no-referrer" /></span><div class="person-main"><p class="person-name">${escapeHTML(property.name)}</p><p class="person-meta">${yen(property.rentYen)} · マッチ度 ${clampPercent(candidate?.matchScore)}%</p></div></li>`; }).join("")}</ul>` : '<p class="small-copy">まだLikeした物件はありません。</p>'}</section>
         <section class="detail-section" aria-labelledby="progress-title"><div class="detail-section-head"><h3 id="progress-title" class="detail-section-title">進捗</h3><span class="stage-pill">${escapeHTML(customer.status)}</span></div><div class="progress-track" aria-label="進捗 ${clampPercent(customer.progress)}%"><div class="progress-value" style="width:${clampPercent(customer.progress)}%"></div></div><div class="progress-labels"><span>初回対応</span><span>物件提案</span><span>内見</span><span>申込</span><span>契約</span></div></section>
       </div>
       <footer class="sheet-footer">
-        ${customer.unassigned ? `<button class="ghost-button" type="button" data-action="claim-customer" data-id="${customer.id}">担当になる</button>` : `<button class="ghost-button" type="button" data-action="close-modal">閉じる</button>`}
+        ${customer.unassigned ? `<button class="ghost-button" type="button" data-action="claim-customer" data-id="${customer.id}">担当になる</button>` : `<button class="ghost-button" type="button" data-action="open-talk" data-id="${customer.id}">トークを開く</button>`}
         <button class="primary-button" type="button" data-action="select-customer" data-id="${customer.id}">${state.selectedCustomerId === customer.id ? "選択中 · 物件を見る" : "この顧客で物件を見る"}</button>
       </footer>`;
     openSheet(content, "customer-detail-title");
@@ -1896,6 +1993,33 @@ import {
         showToast(`${DECK_SORTS.find((item) => item.id === sort).label}に並び替えました`);
       }
     }
+    if (action === "open-talk") openTalk(id);
+    if (action === "talk-insert-draft") {
+      const customer = customerById(id);
+      const input = modalRoot.querySelector("#talk-body");
+      if (customer && input) {
+        runtime.talkDraft = replyDraftFor(customer);
+        input.value = runtime.talkDraft;
+        input.focus();
+        showToast("AI下書きを入れました。送信前に必ず確認してください");
+      }
+    }
+    if (action === "talk-mock-receive") {
+      const messages = talkMessages(id);
+      const sample = INCOMING_SAMPLES[runtime.incomingCount % INCOMING_SAMPLES.length];
+      runtime.incomingCount += 1;
+      messages.push({
+        id: `${id}-in-${messages.length + 1}`,
+        customerId: id,
+        direction: "in",
+        at: "たった今",
+        body: sample,
+        status: "received",
+      });
+      runtime.talkDraft = modalRoot.querySelector("#talk-body")?.value || "";
+      openTalk(id);
+      showToast("顧客からの受信を再現しました（Webhook相当）");
+    }
     if (action === "open-deck-filters") openDeckFilters();
     if (action === "toggle-deck-filter") {
       const key = control.dataset.filter;
@@ -2031,6 +2155,41 @@ import {
       closeModal();
       runtime.completedTodayActions.add("ta2");
       renderApp({ focusSelector: '[data-action="open-reply"]' });
+      showToast("確認済みの返信を送信しました（モック）");
+    }
+    if (event.target.id === "talk-form") {
+      if (runtime.replyPending) return;
+      const customerId = event.target.dataset.id;
+      const customer = customerById(customerId);
+      const body = String(new FormData(event.target).get("body") || "").trim();
+      if (!customer) return;
+      if (!body) {
+        showToast("返信本文を入力してください");
+        event.target.elements.body?.focus();
+        return;
+      }
+      if (containsInternalFragment(body, INTERNAL_REPLY_FRAGMENTS)) {
+        showToast("鍵・AD・管理会社メモなどの社内限定情報を削除してください");
+        event.target.elements.body?.focus();
+        return;
+      }
+      // 送信は「営業が確認した本文」と一致したときだけ通す（承認記録＋本文指紋）
+      const messages = talkMessages(customerId);
+      const draftId = `talk-${customerId}-${messages.length + 1}`;
+      runtime.replyPending = true;
+      try {
+        const approval = createMockReplyApproval({ draftId, body, approvedBy: "employee:sato" });
+        const dto = createApprovedReplyDTO({ customerId, draftId, body, approval });
+        await replyGateway.sendApprovedReply(dto);
+      } catch (error) {
+        runtime.replyPending = false;
+        showToast(error.message || "返信内容を確認してください");
+        return;
+      }
+      runtime.replyPending = false;
+      messages.push({ id: draftId, customerId, direction: "out", at: "たった今", body, status: "sent" });
+      runtime.talkDraft = "";
+      openTalk(customerId);
       showToast("確認済みの返信を送信しました（モック）");
     }
     if (event.target.id === "feedback-form") {
