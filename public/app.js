@@ -736,8 +736,9 @@ import {
     talkDraft: "",
     talkCustomerId: null,
     incomingCount: 0,
-    // 挿し絵は素材が公開ディレクトリに置かれたときだけ描く
-    mascotsReady: false,
+    // 挿し絵は public/mascot/ に素材があるときだけ描く
+    mascotsReady: true,
+    calendarOffset: 0,
   };
   const replyGateway = new MockApprovedReplyGateway();
   let undoTimer = 0;
@@ -810,7 +811,7 @@ import {
   function mascot(key, className) {
     const source = MASCOTS[key];
     if (!source || !runtime.mascotsReady) return "";
-    return `<img class="mascot ${className}" src="${escapeHTML(source)}" alt="" loading="lazy" draggable="false" />`;
+    return `<img class="mascot ${className}" src="${escapeHTML(source)}" alt="" draggable="false" />`;
   }
 
   /** 保存＝しおりを挟む操作なので、好意を表すハートではなくブックマークで示す。 */
@@ -1547,31 +1548,117 @@ import {
     return `<div class="empty-state"><div class="empty-state-inner"><div class="empty-icon" aria-hidden="true">⌕</div><h2 class="empty-title">条件に合う物件が0件です</h2><p class="empty-copy">${escapeHTML(selected.name)}さんの絶対条件を保ったまま、駅徒歩または築年数を少し広げる案を確認してください。</p><button class="primary-button" type="button" data-action="retry-property-search">条件緩和案を確認</button><p class="small-copy" style="margin-top:12px">絶対条件は自動で緩めません</p></div></div>`;
   }
 
+  /** モックの内見日（"8月11日"）から日付だけ取り出す。本番はISO 8601へ寄せる。 */
+  function viewingDayNumber(viewing) {
+    const matched = String(viewing.date).match(/(\d+)日/);
+    return matched ? Number(matched[1]) : null;
+  }
+
+  function renderViewingCalendar() {
+    const base = new Date(2026, 7 + runtime.calendarOffset, 1);
+    const year = base.getFullYear();
+    const month = base.getMonth() + 1;
+    const isMockMonth = runtime.calendarOffset === 0;
+    const first = new Date(year, month - 1, 1);
+    const daysInMonth = new Date(year, month, 0).getDate();
+    const lead = first.getDay();
+    const marked = isMockMonth ? new Set(Viewing.map(viewingDayNumber).filter(Boolean)) : new Set();
+    const today = isMockMonth ? 11 : 0;
+    const cells = [];
+    for (let index = 0; index < lead; index += 1) cells.push('<span class="cal-cell is-outside" aria-hidden="true"></span>');
+    for (let day = 1; day <= daysInMonth; day += 1) {
+      const weekday = (lead + day - 1) % 7;
+      const tone = weekday === 0 ? " is-sun" : weekday === 6 ? " is-sat" : "";
+      const isToday = day === today;
+      cells.push(`<span class="cal-cell${tone}${isToday ? " is-today" : ""}"><span class="cal-day">${day}</span>${marked.has(day) ? '<span class="cal-dot" aria-hidden="true"></span>' : ""}</span>`);
+    }
+    return `
+      <div class="card calendar-card">
+        <div class="calendar-head">
+          <button class="calendar-nav" type="button" data-action="calendar-step" data-step="-1" aria-label="前の月">‹</button>
+          <p class="calendar-title">${year}年${month}月</p>
+          <button class="calendar-nav" type="button" data-action="calendar-step" data-step="1" aria-label="次の月">›</button>
+        </div>
+        <div class="calendar-grid" role="presentation">
+          ${["日", "月", "火", "水", "木", "金", "土"].map((label, index) => `<span class="cal-head${index === 0 ? " is-sun" : index === 6 ? " is-sat" : ""}">${label}</span>`).join("")}
+          ${cells.join("")}
+        </div>
+      </div>`;
+  }
+
   function renderViewings() {
-    const filtered = Viewing.filter((viewing) => viewing.range === runtime.viewingRange);
+    const ranges = { today: "今日", week: "今週", month: "今月" };
+    const filtered = runtime.viewingRange === "month" ? Viewing : Viewing.filter((viewing) => viewing.range === runtime.viewingRange || (runtime.viewingRange === "week" && viewing.range === "today"));
     const todayViewings = Viewing.filter((viewing) => viewing.range === "today").sort((a, b) => a.routeOrder - b.routeOrder);
+    const routeSteps = ["徒歩 8分", "電車 10分"];
     return `
       <section class="view" aria-labelledby="viewings-title">
-        <header class="view-header"><div><p class="eyebrow">VIEWING DESK</p><h1 id="viewings-title" class="page-title">内見</h1></div><span class="date-chip">${filtered.length}組</span></header>
+        <header class="hero">
+          <div class="hero-copy">
+            <p class="eyebrow"><span class="eyebrow-icon" aria-hidden="true">✦</span>VIEWING DESK</p>
+            <h1 id="viewings-title" class="hero-title">内見</h1>
+            <p class="hero-lead">内見の準備からフォローまで、<br />スマートにサポートします。</p>
+          </div>
+          ${mascot("hero", "hero-mascot")}
+        </header>
         ${renderFreshnessWarning("空室と鍵は、出発前に管理会社へ再確認してください")}
+
         <div class="segmented-control" aria-label="内見期間">
-          <button class="segmented-button" type="button" data-action="viewing-range" data-range="today" aria-pressed="${runtime.viewingRange === "today"}">今日</button>
-          <button class="segmented-button" type="button" data-action="viewing-range" data-range="week" aria-pressed="${runtime.viewingRange === "week"}">今週</button>
+          ${Object.entries(ranges).map(([id, label]) => `<button class="segmented-button" type="button" data-action="viewing-range" data-range="${id}" aria-pressed="${runtime.viewingRange === id}">${label}</button>`).join("")}
         </div>
-        ${runtime.viewingRange === "today" ? `
-          <section class="section" aria-labelledby="route-heading">
-            <div class="section-heading"><h2 id="route-heading" class="section-title">推奨巡回順</h2><span class="mini-badge">移動 約25分</span></div>
-            <div class="card route-card"><div class="route-head"><p class="small-copy">移動時間と鍵の受取を加味</p><span class="status-pill success">最短</span></div><ol class="route-list">
-              ${todayViewings.map((viewing) => {
-                const property = propertyById(viewing.propertyId);
-                return `<li class="route-item"><span class="route-number">${viewing.routeOrder}</span><div><p class="route-title">${escapeHTML(property.name)}</p><p class="route-meta">${escapeHTML(viewing.time)} · ${escapeHTML(viewing.meetingPlace)}</p></div></li>`;
-              }).join("")}
-            </ol></div>
-          </section>` : ""}
+
+        ${renderViewingCalendar()}
+
+        <div class="metric-grid" aria-label="内見の件数">
+          <div class="metric-card">
+            ${mascot("checklist", "metric-mascot")}
+            <div class="metric-body">
+              <p class="metric-label">本日</p>
+              <p class="metric-value">${Viewing.filter((viewing) => viewing.range === "today").length}<span class="metric-unit">組</span></p>
+              <p class="metric-note">内見予定</p>
+            </div>
+          </div>
+          <div class="metric-card">
+            ${mascot("house", "metric-mascot")}
+            <div class="metric-body">
+              <p class="metric-label">今週</p>
+              <p class="metric-value">${Viewing.length}<span class="metric-unit">組</span></p>
+              <p class="metric-note">内見予定</p>
+            </div>
+          </div>
+        </div>
+
         <section class="section" aria-labelledby="viewing-list-heading">
-          <div class="section-heading"><h2 id="viewing-list-heading" class="section-title">${runtime.viewingRange === "today" ? "今日" : "今週"}の予定</h2></div>
-          ${filtered.map(renderViewingCard).join("") || `<div class="empty-state" style="min-height:260px"><div class="empty-state-inner"><div class="empty-icon">⌖</div><h3 class="empty-title">内見予定はありません</h3></div></div>`}
+          <div class="section-heading">
+            <h2 id="viewing-list-heading" class="section-title">${ranges[runtime.viewingRange]}の予定</h2>
+            <span class="section-note">${filtered.length}組</span>
+          </div>
+          ${filtered.map(renderViewingCard).join("") || `<div class="empty-state" style="min-height:200px"><div class="empty-state-inner"><div class="empty-icon">⌖</div><h3 class="empty-title">内見予定はありません</h3></div></div>`}
         </section>
+
+        ${runtime.viewingRange === "today" && todayViewings.length ? `
+          <section class="section" aria-labelledby="route-heading">
+            <div class="section-heading">
+              <h2 id="route-heading" class="section-title"><span class="eyebrow-icon" aria-hidden="true">✦</span>推奨巡回順</h2>
+              <span class="section-note">合計移動時間 <strong class="route-total">約25分</strong></span>
+            </div>
+            <div class="card route-card">
+              <ol class="route-list">
+                ${todayViewings.map((viewing, index) => {
+                  const property = propertyById(viewing.propertyId);
+                  return `<li class="route-item${index < todayViewings.length - 1 ? " has-next" : ""}">
+                    <span class="route-number">${viewing.routeOrder}</span>
+                    <div class="route-main">
+                      <p class="route-time">${escapeHTML(viewing.time)}</p>
+                      <p class="route-title">${escapeHTML(property.name)}</p>
+                      <p class="route-meta">${escapeHTML(viewing.meetingPlace)}</p>
+                      ${index < todayViewings.length - 1 ? `<p class="route-move"><span class="meta-icon" aria-hidden="true">↳</span>${routeSteps.join(" → ")}</p>` : ""}
+                    </div>
+                  </li>`;
+                }).join("")}
+              </ol>
+            </div>
+          </section>` : ""}
       </section>`;
   }
 
@@ -2116,6 +2203,10 @@ import {
     }
     if (action === "retry-property-search") {
       showToast("駅徒歩・築年数の緩和案です。条件編集はITANDI接続工程で有効になります");
+    }
+    if (action === "calendar-step") {
+      runtime.calendarOffset += Number(control.dataset.step) || 0;
+      renderApp({ focusSelector: `[data-action="calendar-step"][data-step="${control.dataset.step}"]` });
     }
     if (action === "viewing-range") {
       runtime.viewingRange = range;

@@ -3640,3 +3640,155 @@ img {
 .dot.info {
   background: var(--success);
 }
+
+/* ===== 内見カレンダー（カンプ準拠） ===== */
+.calendar-card {
+  margin-bottom: 14px;
+  padding: 12px 12px 14px;
+}
+
+.calendar-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+.calendar-title {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 860;
+  letter-spacing: -0.01em;
+}
+
+.calendar-nav {
+  display: grid;
+  width: 36px;
+  height: 36px;
+  place-items: center;
+  border-radius: 12px;
+  background: transparent;
+  color: var(--muted-strong);
+  font-size: 19px;
+}
+
+.calendar-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 2px 0;
+}
+
+.cal-head {
+  padding: 4px 0;
+  color: var(--muted-strong);
+  font-size: 11px;
+  font-weight: 800;
+  text-align: center;
+}
+
+.cal-head.is-sun,
+.cal-cell.is-sun .cal-day {
+  color: var(--danger);
+}
+
+.cal-head.is-sat,
+.cal-cell.is-sat .cal-day {
+  color: var(--success);
+}
+
+.cal-cell {
+  display: grid;
+  height: 38px;
+  align-content: center;
+  justify-items: center;
+  gap: 2px;
+}
+
+.cal-day {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  border-radius: 50%;
+  font-size: 13px;
+  font-weight: 780;
+}
+
+.cal-cell.is-today .cal-day {
+  background: var(--accent);
+  color: var(--accent-text);
+  font-weight: 860;
+}
+
+.cal-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+
+.route-total {
+  color: var(--text);
+  font-size: 15px;
+  font-weight: 870;
+}
+
+.route-item {
+  display: flex;
+  gap: 12px;
+  padding: 0;
+}
+
+.route-item.has-next {
+  padding-bottom: 6px;
+}
+
+.route-number {
+  display: grid;
+  width: 34px;
+  height: 34px;
+  flex: 0 0 34px;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--accent);
+  color: var(--accent-text);
+  font-size: 14px;
+  font-weight: 860;
+}
+
+.route-main {
+  min-width: 0;
+  flex: 1;
+  padding-bottom: 10px;
+}
+
+.route-time {
+  margin: 0;
+  color: var(--accent-strong);
+  font-size: 12px;
+  font-weight: 830;
+}
+
+.route-title {
+  margin: 2px 0 0;
+  font-size: 16px;
+  font-weight: 860;
+}
+
+.route-meta {
+  margin: 2px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 720;
+}
+
+.route-move {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 8px 0 0;
+  color: var(--muted-strong);
+  font-size: 12px;
+  font-weight: 760;
+}
