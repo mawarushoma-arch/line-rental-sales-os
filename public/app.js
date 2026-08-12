@@ -1293,8 +1293,8 @@ import {
     if (!selected) {
       return `
         <section class="view" aria-labelledby="properties-title">
-          <header class="view-header"><div><p class="eyebrow">MATCHING</p><h1 id="properties-title" class="page-title">物件</h1></div></header>
-          <div class="empty-state"><div class="empty-state-inner"><div class="empty-icon" aria-hidden="true">♙</div><h2 class="empty-title">先に顧客を選んでください</h2><p class="empty-copy">希望条件と照合して、一人ひとりに合う物件だけを表示します。</p><button class="secondary-button" type="button" data-action="go-customers">顧客を選ぶ</button></div></div>
+          <header class="hero"><div class="hero-copy"><p class="eyebrow">PROPERTY MATCH</p><h1 id="properties-title" class="hero-title">物件</h1></div>${mascot("hero", "hero-mascot")}</header>
+          <div class="empty-state"><div class="empty-state-inner"><div class="empty-icon" aria-hidden="true">♙</div><h2 class="empty-title">先に顧客を選んでください</h2><p class="empty-copy">希望条件と照合して、一人ひとりに合う物件だけを表示します。</p><button class="primary-button" type="button" data-action="go-customers">顧客を選ぶ</button></div></div>
         </section>`;
     }
 
@@ -1307,75 +1307,41 @@ import {
       : orderedProperties.filter((property) => statuses.get(property.id) === "unreviewed");
     const remaining = unreviewed.filter(passesDeckFilters);
     const hiddenByFilter = unreviewed.length - remaining.length;
-    const likedProperties = orderedProperties.filter((property) => statuses.get(property.id) === "liked");
-    const likedCount = likedProperties.length;
+    const likedCount = orderedProperties.filter((property) => statuses.get(property.id) === "liked").length;
     const skippedCount = [...statuses.values()].filter((status) => status === "skipped").length;
-    // 横スワイプは判断せず前後へ送るだけなので、いま見ている位置を保持する。
     const cursor = clampDeckCursor(remaining.length);
     const current = remaining[cursor];
-    const previous = remaining[cursor - 1];
     const next = remaining[cursor + 1];
     return `
       <section class="view deck-screen" aria-labelledby="properties-title">
-        <div class="selected-customer-bar" aria-label="選択中の顧客">
-          <div class="selection-copy"><span class="selection-dot" aria-hidden="true"></span><div><span class="selection-label">この顧客に提案</span><strong class="selection-name">${escapeHTML(selected.name)}</strong></div></div>
-          <button class="ghost-button compact-button" type="button" data-action="go-customers">変更</button>
-        </div>
-        <header class="deck-header">
-          <h1 id="properties-title" class="deck-title">候補カード <span class="deck-count">${remaining.length}</span></h1>
-          <button class="deck-icon-button" type="button" data-action="edit-preference" data-preference="propertyFields" aria-label="カードの表示項目を編集"><span aria-hidden="true">|||</span></button>
-        </header>
-        <div class="deck-chips" role="group" aria-label="並び替えと絞り込み">
-          <button class="deck-chip round ${activeDeckFilterCount() ? "on" : ""}" type="button" data-action="open-deck-filters" aria-label="絞り込み${activeDeckFilterCount() ? `（${activeDeckFilterCount()}件適用中）` : ""}"><span aria-hidden="true">⌕</span>${activeDeckFilterCount() ? `<span class="chip-dot" aria-hidden="true"></span>` : ""}</button>
-          ${DECK_SORTS.map((sort) => `<button class="deck-chip ${runtime.deckSort === sort.id ? "on" : ""}" type="button" data-action="deck-sort" data-sort="${sort.id}" aria-pressed="${runtime.deckSort === sort.id}">${escapeHTML(sort.label)}</button>`).join("")}
-        </div>
-        ${renderFreshnessWarning("空室・鍵・金額は提案前に再確認してください")}
-        ${current ? `
-          <div class="deck-stage" data-deck-stage aria-live="polite">
-            ${previous ? renderPropertyCard(previous, "prev", selected.id) : ""}
-            ${next ? renderPropertyCard(next, "next", selected.id) : ""}
-            ${renderPropertyCard(current, "current", selected.id)}
+        <div class="card proposal-bar">
+          <div class="proposal-copy">
+            <p class="proposal-label"><span class="proposal-dot" aria-hidden="true"></span>この顧客に提案</p>
+            <p class="proposal-name">${escapeHTML(selected.name)}</p>
           </div>
-          <p class="deck-position">${cursor + 1} / ${remaining.length}件目　保存 ${likedCount} · Skip ${skippedCount}${hiddenByFilter ? ` · 絞り込みで${hiddenByFilter}件非表示` : ""}</p>
-          ${likedCount ? "" : '<p class="deck-hint">カードを下へスワイプすると、ここに保存されます</p>'}
-          ${renderDeckPile(likedProperties, selected)}` : adapterState.empty ? renderPropertyNoResults(selected) : hiddenByFilter ? renderDeckFilteredOut(hiddenByFilter) : renderPropertyEmpty(selected, { liked: likedCount, skipped: skippedCount })}
-        ${renderDeckMenu()}
-      </section>`;
-  }
-
-  /**
-   * 保存したカードが画面下へ積み上がっていく様子を出す。
-   * 件数ラベルは重ねず（束の見え方を邪魔するため）、束そのものを一覧への入口にする。
-   */
-  function renderDeckPile(likedProperties, selected) {
-    const slabs = [...likedProperties].reverse().slice(0, 3);
-    return `
-      <div class="deck-pile ${slabs.length ? "" : "is-empty"}" data-deck-tray>
-        ${slabs.map((property, index) => `<span class="pile-slab" style="--i:${index}" aria-hidden="true"><img src="${escapeHTML(propertyVisual(property).url)}" alt="" loading="eager" referrerpolicy="no-referrer" draggable="false" /></span>`).join("")}
-        <button class="pile-open" type="button" data-action="review-candidates" data-id="${selected.id}" aria-label="保存済み${likedProperties.length}件を確認する"></button>
-      </div>`;
-  }
-
-  /** 固定フッターを隠す代わりの移動導線。物件画面を広く使うため右下に置く。 */
-  function renderDeckMenu() {
-    const destinations = [
-      ["today", "今日", "✓"],
-      ["customers", "顧客", "♙"],
-      ["viewings", "内見", "⌖"],
-      ["cases", "案件", "▤"],
-    ];
-    return `
-      <div class="deck-nav ${runtime.deckMenuOpen ? "is-open" : ""}" data-deck-nav>
-        ${runtime.deckMenuOpen ? '<button class="deck-nav-scrim" type="button" data-action="toggle-deck-menu" aria-label="メニューを閉じる"></button>' : ""}
-        <div class="deck-nav-items" role="menu" ${runtime.deckMenuOpen ? "" : "hidden"}>
-          ${destinations.map(([tab, label, icon]) => `<button class="deck-nav-item" type="button" role="menuitem" data-action="go-tab" data-tab-target="${tab}"><span class="deck-nav-icon" aria-hidden="true">${icon}</span>${label}</button>`).join("")}
+          <button class="ghost-button compact-button" type="button" data-action="go-customers">変更</button>
+          ${mascot("search", "proposal-mascot")}
         </div>
-        <button class="deck-fab" type="button" data-action="toggle-deck-menu" aria-expanded="${runtime.deckMenuOpen}" aria-haspopup="menu" aria-label="${runtime.deckMenuOpen ? "メニューを閉じる" : "ほかの画面へ移動"}"><span aria-hidden="true">${runtime.deckMenuOpen ? "×" : "≡"}</span></button>
-      </div>`;
-  }
 
-  function renderDeckFilteredOut(hiddenByFilter) {
-    return `<div class="empty-state"><div class="empty-state-inner"><div class="empty-icon" aria-hidden="true">⌕</div><h2 class="empty-title">絞り込みで全件が隠れています</h2><p class="empty-copy">条件に合う未確認の物件が${hiddenByFilter}件あります。絞り込みを外すと表示されます。</p><button class="primary-button" type="button" data-action="clear-deck-filters">絞り込みを外す</button></div></div>`;
+        <div class="deck-heading">
+          <h1 id="properties-title" class="deck-title">候補カード</h1>
+          <span class="deck-count">${remaining.length}件</span>
+          <button class="deck-icon-button" type="button" data-action="edit-preference" data-preference="propertyFields" aria-label="カードの表示項目を編集"><span aria-hidden="true">|||</span></button>
+        </div>
+
+        <div class="deck-chips" role="group" aria-label="並び替えと絞り込み">
+          <button class="deck-chip round ${activeDeckFilterCount() ? "on" : ""}" type="button" data-action="open-deck-filters" aria-label="絞り込み${activeDeckFilterCount() ? `（${activeDeckFilterCount()}件適用中）` : ""}"><span aria-hidden="true">⌕</span>${activeDeckFilterCount() ? '<span class="chip-dot" aria-hidden="true"></span>' : ""}</button>
+          ${DECK_SORTS.map((sort) => `<button class="deck-chip ${runtime.deckSort === sort.id ? "on" : ""}" type="button" data-action="deck-sort" data-sort="${sort.id}" aria-pressed="${runtime.deckSort === sort.id}">${escapeHTML(sort.label)}${runtime.deckSort === sort.id ? '<span class="chip-caret" aria-hidden="true">⌄</span>' : ""}</button>`).join("")}
+        </div>
+
+        ${renderFreshnessWarning("空室・鍵・金額は提案前に再確認してください")}
+
+        ${current ? `
+          <div class="deck-list" data-deck-stage aria-live="polite">
+            ${renderPropertyCard(current, "current", selected.id, { cursor, total: remaining.length, likedCount, skippedCount })}
+            ${next ? renderPropertyCard(next, "next", selected.id, {}) : ""}
+          </div>` : adapterState.empty ? renderPropertyNoResults(selected) : hiddenByFilter ? renderDeckFilteredOut(hiddenByFilter) : renderPropertyEmpty(selected, { liked: likedCount, skipped: skippedCount })}
+      </section>`;
   }
 
   function clampDeckCursor(length) {
@@ -1426,33 +1392,42 @@ import {
    * カード表面は要点だけに絞る（物件名・賃料・間取り・募集状況・駅徒歩・マッチ度・鮮度）。
    * 賃料以外の金額、AD、備考、合う理由は詳細シートへ送り、面を写真で使い切る。
    */
-  function renderPropertyCard(property, slot, customerId) {
+  function renderPropertyCard(property, slot, customerId, stats = {}) {
     const isCurrent = slot === "current";
     const candidate = candidateByIds(customerId, property.id);
     const stale = propertyIsStale(property);
+    const sold = property.listingStatus === "募集終了";
     const [walk, layout] = propertyPlaceParts(property);
-    const statusTone = listingTone(property.listingStatus);
     const visual = propertyVisual(property);
     return `
-      <article class="property-card deck-card ${slot} ${isCurrent ? "top-card" : ""}" data-property-card data-property-slot="${slot}" data-property-id="${property.id}" data-listing-status="${property.listingStatus}" ${isCurrent ? 'aria-label="現在の候補物件"' : 'aria-hidden="true"'}>
-        <img class="card-photo ${visual.kind}" src="${escapeHTML(visual.url)}" alt="${escapeHTML(property.name)}の${visual.label}" loading="${isCurrent ? "eager" : "lazy"}" referrerpolicy="no-referrer" draggable="false" />
-        <span class="card-scrim" aria-hidden="true"></span>
-        <span class="swipe-badge save" aria-hidden="true">保存</span>
-        <div class="card-top">
-          <span class="match-badge">マッチ度 ${clampPercent(candidate?.matchScore)}%</span>
-          <span class="freshness-chip ${stale ? "stale" : ""}">${stale ? "⚠ " : ""}更新 ${escapeHTML(relativeSourceTime(property.sourceUpdatedAt))}</span>
+      <article class="card property-card ${slot} ${isCurrent ? "top-card" : ""}" data-property-card data-property-slot="${slot}" data-property-id="${property.id}" data-listing-status="${property.listingStatus}" ${isCurrent ? 'aria-label="現在の候補物件"' : 'aria-hidden="true"'}>
+        <div class="card-photo-wrap">
+          <img class="card-photo ${visual.kind}" src="${escapeHTML(visual.url)}" alt="${escapeHTML(property.name)}の${visual.label}" loading="${isCurrent ? "eager" : "lazy"}" referrerpolicy="no-referrer" draggable="false" />
+          <span class="match-badge">マッチ度 <strong>${clampPercent(candidate?.matchScore)}</strong><span class="match-badge-unit">%</span></span>
+          <span class="freshness-chip ${stale ? "stale" : ""}"><span aria-hidden="true">◷</span>${stale ? " ⚠" : ""}更新 ${escapeHTML(relativeSourceTime(property.sourceUpdatedAt))}</span>
+          <span class="listing-chip ${listingTone(property.listingStatus)}">${escapeHTML(property.listingStatus)}</span>
         </div>
-        <div class="card-foot">
-          <span class="status-pill ${statusTone}">${escapeHTML(property.listingStatus)}</span>
-          <h2 class="card-name">${escapeHTML(property.name)}</h2>
-          <p class="card-price">${escapeHTML(manYen(property.rentYen))}<span class="card-layout"> / ${escapeHTML(layout || "間取り 未確認")}</span></p>
-          <p class="card-walk">${escapeHTML(walk || "所在 未確認")}　内見 ${escapeHTML(property.viewingAvailable)}</p>
+        <div class="card-body">
+          <div class="card-title-row">
+            <button class="card-name-button" type="button" data-action="open-property-detail" data-id="${property.id}">${escapeHTML(property.name)}</button>
+            <span class="card-chevron" aria-hidden="true">›</span>
+          </div>
+          <p class="card-price"><strong>${escapeHTML(manYen(property.rentYen))}</strong><span class="card-layout"> / ${escapeHTML(layout)}</span></p>
+          <p class="card-walk"><span class="meta-icon" aria-hidden="true">▤</span>${escapeHTML(walk)}　<span class="card-viewing">内見 ${escapeHTML(property.viewingAvailable)}</span></p>
+          ${isCurrent ? `
+            <div class="decide-row">
+              <div class="decide-item">
+                <button class="decide-button skip" type="button" data-action="property-skip" data-id="${property.id}" aria-label="この物件をスキップする"><span aria-hidden="true">✕</span></button>
+                <span class="decide-label">スキップ</span>
+              </div>
+              <p class="decide-hint"><span aria-hidden="true">←</span> 左右にスワイプで<br />次の物件へ <span aria-hidden="true">→</span></p>
+              <div class="decide-item">
+                <button class="decide-button save" type="button" data-action="property-like" data-id="${property.id}" ${sold ? "disabled" : ""} aria-label="${sold ? "募集終了のため保存できません" : "この物件を候補へ保存する"}">${sold ? '<span aria-hidden="true">—</span>' : SAVE_ICON}</button>
+                <span class="decide-label">${sold ? "募集終了" : "保存する"}</span>
+              </div>
+            </div>
+            <p class="deck-position"><strong>${stats.cursor + 1}</strong> / ${stats.total}件目　<span class="accent-text">保存 ${stats.likedCount}</span> · Skip ${stats.skippedCount}</p>` : ""}
         </div>
-        ${isCurrent ? `<button class="card-open" type="button" data-action="open-property-detail" data-id="${property.id}" aria-label="${escapeHTML(property.name)}の詳細を開く"><span class="card-open-label">タップで詳細</span></button>
-        <div class="card-decide">
-          <button class="card-action skip" type="button" data-action="property-skip" data-id="${property.id}" aria-label="この物件をSkipする"><span aria-hidden="true">✕</span></button>
-          <button class="card-action save" type="button" data-action="property-like" data-id="${property.id}" ${property.listingStatus === "募集終了" ? "disabled" : ""} aria-label="${property.listingStatus === "募集終了" ? "募集終了のため保存できません" : "この物件を候補へ保存する"}">${property.listingStatus === "募集終了" ? '<span aria-hidden="true">—</span>' : SAVE_ICON}</button>
-        </div>` : ""}
       </article>`;
   }
 
@@ -1625,24 +1600,58 @@ import {
 
   function renderCases() {
     const stages = [
-      ["追客中", "#80a995"],
-      ["内見調整", "#f3a36f"],
-      ["申込準備", "#d99655"],
-      ["審査中", "#8e93c8"],
-      ["契約準備", "#6da9ba"],
-      ["契約済", "#6a9f83"],
+      ["追客中", "追客中の案件", "line"],
+      ["内見調整", "内見の日程を調整中の案件", "checklist"],
+      ["申込準備", "申込に必要な書類を準備中の案件", "doc"],
+      ["審査中", "審査結果を待っている案件", "search"],
+      ["契約準備", "契約手続きを進めている案件", "house"],
+      ["契約済", "契約が完了した案件", "idea"],
     ];
+    const dueSoon = Case.filter((item) => {
+      const due = Date.parse(item.dueAt);
+      return Number.isFinite(due) && due >= MOCK_NOW && due <= MOCK_NOW + 24 * 60 * 60 * 1_000;
+    }).length;
     return `
       <section class="view" aria-labelledby="cases-title">
-        <header class="view-header"><div><p class="eyebrow">DEAL PIPELINE</p><h1 id="cases-title" class="page-title">案件</h1></div><span class="date-chip">全 ${Case.length}件</span></header>
-        <div class="summary-grid" aria-label="案件概要"><div class="metric-card"><span class="metric-label">期限24時間以内</span><strong class="metric-value">${Case.filter((item) => { const due = Date.parse(item.dueAt); return Number.isFinite(due) && due >= MOCK_NOW && due <= MOCK_NOW + 24 * 60 * 60 * 1_000; }).length}<span class="metric-unit">件</span></strong></div><div class="metric-card"><span class="metric-label">申込以降</span><strong class="metric-value">${Case.filter((item) => stageAtOrBeyond(item.stage, "申込準備")).length}<span class="metric-unit">件</span></strong></div></div>
+        <header class="hero">
+          <div class="hero-copy">
+            <p class="eyebrow">DEAL PIPELINE</p>
+            <h1 id="cases-title" class="hero-title">案件</h1>
+            <p class="hero-lead">進捗を管理して、成約までリードしよう。</p>
+          </div>
+          ${mascot("hero", "hero-mascot")}
+        </header>
+
+        <div class="metric-grid" aria-label="案件概要">
+          <div class="metric-card">
+            <span class="metric-icon" aria-hidden="true">◷</span>
+            <div class="metric-body">
+              <p class="metric-label">期限24時間以内</p>
+              <p class="metric-value">${dueSoon}<span class="metric-unit">件</span></p>
+              <p class="metric-note">早めの対応で成約率UP</p>
+            </div>
+          </div>
+          <div class="metric-card">
+            <span class="metric-icon" aria-hidden="true">▤</span>
+            <div class="metric-body">
+              <p class="metric-label">申込以降</p>
+              <p class="metric-value">${Case.filter((item) => stageAtOrBeyond(item.stage, "申込準備")).length}<span class="metric-unit">件</span></p>
+              <p class="metric-note">契約まであと一歩</p>
+            </div>
+          </div>
+        </div>
+
         <section class="section" aria-labelledby="pipeline-heading">
-          <div class="section-heading"><h2 id="pipeline-heading" class="section-title">ステージ別</h2><span class="section-note">縦に進行</span></div>
-          ${stages.map(([stage, color], index) => {
+          <h2 id="pipeline-heading" class="sr-only">ステージ別の案件</h2>
+          ${stages.map(([stage, copy, art], index) => {
             const cases = Case.filter((item) => item.stage === stage);
-            return `<details class="stage-accordion" style="--stage-color:${color}" ${index === 1 ? "open" : ""}>
-              <summary class="stage-summary"><span class="stage-rail-mark" aria-hidden="true"></span><span class="stage-summary-main"><span class="stage-name">${stage}</span><span class="stage-count">${cases.length}件</span></span><span class="stage-toggle" aria-hidden="true">＋</span></summary>
-              <div class="stage-content">${cases.map(renderCaseCard).join("") || '<p class="small-copy">このステージの案件はありません。</p>'}</div>
+            return `<details class="card stage-accordion" ${index === 1 ? "open" : ""}>
+              <summary class="stage-summary">
+                ${mascot(art, "stage-mascot")}
+                <span class="stage-summary-main"><span class="stage-name">${stage}</span><span class="stage-copy">${copy}</span></span>
+                <span class="stage-toggle" aria-hidden="true"></span>
+              </summary>
+              <div class="stage-content">${cases.map(renderCaseCard).join("") || '<p class="small-copy stage-empty">このステージの案件はありません。</p>'}</div>
             </details>`;
           }).join("")}
         </section>
@@ -1655,13 +1664,22 @@ import {
     const dueLabel = dueCalendarLabel(caseItem.dueAt);
     const dueTimestamp = Date.parse(caseItem.dueAt);
     const urgent = Number.isFinite(dueTimestamp) && dueTimestamp <= MOCK_NOW + 24 * 60 * 60 * 1_000;
-    return `<article class="case-card">
-      <div class="case-line"><p class="case-customer">${escapeHTML(customer.name)}</p><span class="status-pill ${urgent ? "urgent" : "neutral"}">${escapeHTML(dueLabel)}</span></div>
-      <p class="case-property">${escapeHTML(property.name)}</p>
-      <div class="case-next"><span class="case-next-label">次アクション</span><strong class="case-next-action">${escapeHTML(caseItem.nextAction)}</strong></div>
-      <div class="case-status-grid"><div class="case-status"><span class="status-label">書類</span><strong class="status-value">${escapeHTML(caseItem.documentStatus)}</strong></div><div class="case-status"><span class="status-label">申込状態</span><strong class="status-value">${escapeHTML(caseItem.applicationStatus)}</strong></div></div>
-      <p class="case-history">履歴：${escapeHTML(dueCalendarLabel(caseItem.updatedAt))} · 佐藤が更新</p>
-    </article>`;
+    return `<button class="case-card" type="button" data-action="open-customer" data-id="${customer.id}">
+      <span class="case-avatar" aria-hidden="true">${escapeHTML(customer.name.slice(0, 1))}</span>
+      <span class="case-main">
+        <span class="case-customer">${escapeHTML(customer.name)}</span>
+        <span class="case-property">${property ? escapeHTML(property.name) : "物件 未確定"}</span>
+        <span class="case-due ${urgent ? "is-urgent" : ""}">${escapeHTML(dueLabel)}</span>
+      </span>
+      <span class="case-detail">
+        <span class="case-next"><span class="case-label">次のアクション</span><span class="case-next-action">${escapeHTML(caseItem.nextAction)}</span></span>
+        <span class="case-status-row">
+          <span class="case-status"><span class="case-label">書類ステータス</span><span class="case-status-value"><span class="dot ok" aria-hidden="true"></span>${escapeHTML(caseItem.documentStatus)}</span></span>
+          <span class="case-status"><span class="case-label">申込ステータス</span><span class="case-status-value"><span class="dot info" aria-hidden="true"></span>${escapeHTML(caseItem.applicationStatus)}</span></span>
+        </span>
+      </span>
+      <span class="chevron" aria-hidden="true">›</span>
+    </button>`;
   }
 
   function openSheet(content, labelId) {
@@ -1827,6 +1845,7 @@ import {
    * デッキの操作。横は判断せず前後の候補へ送るだけ、下は候補へ保存する。
    * Skipは判断が消えると取り返しにくいので、ジェスチャーではなくトレイのボタンに置く。
    */
+  /** デッキの操作。横スワイプで前後の候補へ送る。判断はカード内のボタンで行う。 */
   function attachSwipeInteractions() {
     const stage = appView.querySelector("[data-deck-stage]");
     const card = stage?.querySelector(".top-card[data-property-card]");
@@ -1841,96 +1860,52 @@ import {
       }
     }
 
-    const cards = [...stage.querySelectorAll("[data-property-card]")];
     let gesture = null;
 
     const resetStage = () => {
       stage.classList.remove("is-dragging");
-      cards.forEach((item) => {
-        item.style.removeProperty("--drag-x");
-        item.style.removeProperty("--drag-y");
-        item.style.removeProperty("--drag-scale");
-      });
-      const badge = card.querySelector(".swipe-badge.save");
-      if (badge) badge.style.opacity = "0";
-      appView.querySelector("[data-deck-tray]")?.classList.remove("is-target");
+      card.style.removeProperty("--drag-x");
     };
 
     card.addEventListener("pointerdown", (event) => {
       if (!event.isPrimary || gesture || runtime.decisionPending) return;
       if (event.pointerType === "mouse" && event.button !== 0) return;
-      gesture = {
-        pointerId: event.pointerId,
-        startX: event.clientX,
-        startY: event.clientY,
-        startTime: event.timeStamp,
-        dx: 0,
-        dy: 0,
-        axis: null,
-      };
+      gesture = { pointerId: event.pointerId, startX: event.clientX, startY: event.clientY, startTime: event.timeStamp, dx: 0, axis: null };
     });
 
     card.addEventListener("pointermove", (event) => {
       if (!gesture || gesture.pointerId !== event.pointerId) return;
       const dx = event.clientX - gesture.startX;
       const dy = event.clientY - gesture.startY;
-      const absX = Math.abs(dx);
-      const absY = Math.abs(dy);
       if (!gesture.axis) {
-        if (Math.max(absX, absY) < 10) return;
-        gesture.axis = absX >= absY ? "horizontal" : "vertical";
-        card.setPointerCapture?.(event.pointerId);
-        stage.classList.add("is-dragging");
+        if (Math.max(Math.abs(dx), Math.abs(dy)) < 10) return;
+        // 縦は画面のスクロールに渡す
+        gesture.axis = Math.abs(dx) > Math.abs(dy) * 1.2 ? "horizontal" : "vertical";
+        if (gesture.axis === "horizontal") {
+          card.setPointerCapture?.(event.pointerId);
+          stage.classList.add("is-dragging");
+        }
       }
+      if (gesture.axis !== "horizontal") return;
       event.preventDefault();
       gesture.dx = dx;
-      gesture.dy = dy;
-      const width = Math.max(card.getBoundingClientRect().width, 1);
-      const height = Math.max(card.getBoundingClientRect().height, 1);
-      if (gesture.axis === "horizontal") {
-        cards.forEach((item) => item.style.setProperty("--drag-x", `${dx}px`));
-        return;
-      }
-      // 上方向へは動かさない（保存の取り消しに見えるため）
-      const pulled = Math.max(0, dy);
-      const progress = Math.min(1, pulled / (height * 0.22));
-      card.style.setProperty("--drag-y", `${pulled}px`);
-      card.style.setProperty("--drag-scale", String(1 - progress * 0.06));
-      const badge = card.querySelector(".swipe-badge.save");
-      if (badge) badge.style.opacity = String(progress);
-      appView.querySelector("[data-deck-tray]")?.classList.toggle("is-target", progress >= 1);
-      void width;
+      card.style.setProperty("--drag-x", `${dx}px`);
     });
 
     const finish = (event) => {
       if (!gesture || gesture.pointerId !== event.pointerId) return;
       const current = gesture;
       gesture = null;
-      if (!current.axis) {
+      if (current.axis !== "horizontal") {
         resetStage();
         return;
       }
       runtime.suppressCardClick = true;
       const rect = card.getBoundingClientRect();
       const elapsed = Math.max(16, event.timeStamp - current.startTime);
-      if (current.axis === "horizontal") {
-        const passed = Math.abs(current.dx) >= rect.width * 0.24 || (Math.abs(current.dx) / elapsed >= 0.5 && Math.abs(current.dx) >= 24);
-        resetStage();
-        if (passed) moveDeckCursor(current.dx < 0 ? 1 : -1);
-        return;
-      }
-      const passed = current.dy >= rect.height * 0.22 || (current.dy / elapsed >= 0.5 && current.dy >= 40);
-      if (!passed) {
-        resetStage();
-        return;
-      }
-      if (card.dataset.listingStatus === "募集終了") {
-        resetStage();
-        showToast("募集終了のため候補へ保存できません");
-        return;
-      }
+      const passed = Math.abs(current.dx) >= rect.width * 0.24 || (Math.abs(current.dx) / elapsed >= 0.5 && Math.abs(current.dx) >= 24);
       resetStage();
-      animatePropertyDecision("liked", card.dataset.propertyId);
+      if (passed) moveDeckCursor(current.dx < 0 ? 1 : -1);
     };
 
     card.addEventListener("pointerup", finish);
