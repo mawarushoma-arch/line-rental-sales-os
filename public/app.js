@@ -51,11 +51,7 @@ import {
       accessGate.innerHTML = `
         <section class="access-panel" aria-labelledby="access-title">
           <div class="access-brand">
-            <span class="brand-mark" aria-hidden="true">R</span>
-            <div>
-              <p class="brand-name">ROOM PILOT</p>
-              <p class="brand-subtitle">LINE賃貸営業OS <span class="mock-badge">モック</span></p>
-            </div>
+            <img class="brand-logo" src="/brand/header.png" width="613" height="96" alt="それ、LINEでええやん。｜不動産" />
           </div>
           <div class="access-main">
             <div class="access-illustration" aria-hidden="true">⌛</div>
@@ -75,11 +71,7 @@ import {
       accessGate.innerHTML = `
         <section class="access-panel" aria-labelledby="access-title">
           <div class="access-brand">
-            <span class="brand-mark" aria-hidden="true">R</span>
-            <div>
-              <p class="brand-name">ROOM PILOT</p>
-              <p class="brand-subtitle">LINE賃貸営業OS <span class="mock-badge">モック</span></p>
-            </div>
+            <img class="brand-logo" src="/brand/header.png" width="613" height="96" alt="それ、LINEでええやん。｜不動産" />
           </div>
           <div class="access-main">
             <div class="access-illustration" aria-hidden="true">×</div>

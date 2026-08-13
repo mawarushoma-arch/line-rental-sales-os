@@ -133,17 +133,14 @@ async function loadMessages({ reset = false } = {}) {
 
 /* ------------------------------------------------------------------ 描画 */
 
+const BRAND_LOGO = `<img class="brand-logo" src="/brand/header.png" width="613" height="96" alt="それ、LINEでええやん。｜不動産" />`;
+
 function renderBrand() {
   const bot = state.status?.bot;
-  if (!bot) {
-    brandRoot.innerHTML = `
-      <p class="line-brand-name">公式LINE実機テスト</p>
-      <p class="line-brand-meta">${escapeHTML(state.error || "接続を確認しています…")}</p>`;
-    return;
-  }
-  brandRoot.innerHTML = `
-    <p class="line-brand-name">${escapeHTML(bot.displayName)}</p>
-    <p class="line-brand-meta">${escapeHTML(bot.basicId)}｜公式LINE実機テスト</p>`;
+  const meta = bot
+    ? `${bot.basicId}｜公式LINE実機テスト`
+    : state.error || "接続を確認しています…";
+  brandRoot.innerHTML = `${BRAND_LOGO}<p class="line-brand-meta">${escapeHTML(meta)}</p>`;
 }
 
 function renderChips() {

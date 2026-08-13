@@ -67,6 +67,22 @@ curl -X PUT https://api.line.me/v2/bot/channel/webhook/endpoint \
 
 ローカルで試す場合は `.dev.vars`（gitignore済み）に同じ4項目を書くと `npm run dev` でも同じ経路が動く。ただし保存はプロセス内メモリで、Webhookは外部から届かない。
 
+### リッチメニュー
+
+トーク下部の常設ボタン。画像は2500×1686・JPEG・**1MB以下**が上限で、全面を1つのタップ領域にして営業画面へ送っている。
+
+```bash
+# 作成 → 画像アップロード → 紐づけ、の3手順
+curl -X POST https://api.line.me/v2/bot/richmenu -H "Authorization: Bearer $TOKEN" ...
+curl -X POST https://api-data.line.me/v2/bot/richmenu/$ID/content -H 'content-type: image/jpeg' --data-binary @richmenu.jpg ...
+curl -X POST https://api.line.me/v2/bot/user/$USER_ID/richmenu/$ID   # 特定の人だけ
+curl -X POST https://api.line.me/v2/bot/user/all/richmenu/$ID        # 友だち全員（既定）
+```
+
+**特定の人へ紐づけている間は、その人にだけ表示される。** 既定を設定するまで他の友だちには出ない。外すときは `DELETE /v2/bot/user/{userId}/richmenu`、既定は `DELETE /v2/bot/user/all/richmenu`。
+
+ヘッダーのロゴは `public/brand/header.png`。元データの透明な余白を落として高さ96pxで書き出したもので、表示は高さ24〜30px。
+
 ## 配色
 
 全画面ダークで統一しています（背景 `#101114`、端末がダーク設定ならもう一段沈めて `#0B0C0E`）。
