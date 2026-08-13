@@ -1613,7 +1613,7 @@ import {
         <button class="icon-button" type="button" data-action="close-modal" aria-label="閉じる">×</button>
       </header>
       <div class="sheet-content talk-content">
-        <div class="reply-safety">モックです。外部のLINEへは送信せず、この端末の記録にだけ残します。</div>
+        <div class="reply-safety">モックです。外部のLINEへは送信せず、この端末の記録にだけ残します。<a class="talk-live-link" href="/line">本物の公式LINEで試す →</a></div>
         <ol class="talk-log">
           ${messages.map((message) => `
             <li class="talk-row ${message.direction}">

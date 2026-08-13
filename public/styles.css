@@ -2535,6 +2535,15 @@ img {
   font-weight: 700;
 }
 
+/* モックのトークから、本物の公式アカウントを試す画面への導線 */
+.talk-live-link {
+  display: inline-block;
+  margin-left: 6px;
+  color: var(--accent-strong);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
 .sheet-footer {
   position: sticky;
   bottom: 0;

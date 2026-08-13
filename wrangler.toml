@@ -9,5 +9,13 @@ compatibility_date = "2026-08-12"
 directory = "./dist/client"
 binding = "ASSETS"
 
+# 公式LINEのトーク保存先。メッセージ・スレッド・冪等キーだけを置く
+[[kv_namespaces]]
+binding = "LINE_STORE"
+id = "5a5b6bdeeab246559a692b169aa6c043"
+
+# LINE_CHANNEL_SECRET / LINE_CHANNEL_ACCESS_TOKEN / ROOM_PILOT_LINE_KEY は
+# ここへ書かず `wrangler secret put` で登録する（このファイルは公開リポジトリに入る）
+
 [observability]
 enabled = true

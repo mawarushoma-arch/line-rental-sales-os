@@ -33,6 +33,40 @@ npm run preview:file
 
 `npm test` はWorker/API/状態遷移のテストに加えて、依存ゼロのChrome CDP統合テストも呼び出します。Chromeを起動できない管理環境では統合テストだけが理由付きでSKIPされます。実機に近い確認では `BROWSER_SMOKE_STRICT=1 npm run test:browser` を実行すると、起動不可も失敗として扱えます。
 
+## 公式LINE実機テスト（`/line`）
+
+モックとは別に、**本物の公式アカウントと送受信する画面**を `/line` に用意しています。SPA（`public/app.js`）とは切り離してあり、モックのデータには一切触れません。
+
+- 受信：`POST /line/webhook` が `X-Line-Signature` をチャネルシークレットで検証してから保存する。検証に失敗した本文は読まずに捨てる。`webhookEventId` で冪等化する。
+- 送信：`POST /api/line/send`。営業の確認記録（`confirmed` / `draftId` / `approvedBy` / `approvedAt`）と本文指紋が揃い、**サーバーが本文から作り直した指紋と一致したときだけ** Messaging API を呼ぶ。確認から10分を過ぎた本文は送らない。
+- 受信直後（約50秒以内）は無料の**応答メッセージ**、過ぎていれば**プッシュ送信**へ自動で切り替える。プッシュはフリープランで月200通なので、画面に残数を出している。
+- 送信失敗は成功へ丸めず `failed` として残す。再送は営業がもう一度確認したときだけ。
+- 生のLINE user ID と `replyToken` は画面へ返さない。画面が扱うのはチャネルシークレットで導出した不可逆な `threadId` だけ。
+
+保存先は KV（binding `LINE_STORE`）。画面は `x-room-pilot-key` ヘッダーの合言葉で保護する。
+
+### 必要な設定
+
+シークレットは3つ。**`wrangler.toml` へ書かず**、暗号化シークレットとして登録する（このリポジトリは公開）。
+
+```bash
+wrangler secret put LINE_CHANNEL_SECRET        # LINE Developers > チャネル基本設定
+wrangler secret put LINE_CHANNEL_ACCESS_TOKEN  # 同 > Messaging API設定（長期）
+wrangler secret put ROOM_PILOT_LINE_KEY        # この画面を開くための合言葉（任意の文字列）
+```
+
+Webhookの宛先は Messaging API から登録できる。
+
+```bash
+curl -X PUT https://api.line.me/v2/bot/channel/webhook/endpoint \
+  -H "Authorization: Bearer $LINE_CHANNEL_ACCESS_TOKEN" -H 'content-type: application/json' \
+  -d '{"endpoint":"https://<デプロイ先>/line/webhook"}'
+```
+
+**Webhookの利用ON／応答メッセージOFF は APIから変えられない**ため、[LINE Official Account Manager](https://manager.line.biz/) の「設定 > 応答設定」で切り替える。ONになっているかは `GET /v2/bot/channel/webhook/endpoint` の `active` で確認できる。
+
+ローカルで試す場合は `.dev.vars`（gitignore済み）に同じ4項目を書くと `npm run dev` でも同じ経路が動く。ただし保存はプロセス内メモリで、Webhookは外部から届かない。
+
 ## 配色
 
 全画面ダークで統一しています（背景 `#101114`、端末がダーク設定ならもう一段沈めて `#0B0C0E`）。
