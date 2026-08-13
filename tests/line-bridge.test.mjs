@@ -148,6 +148,71 @@ test("署名が正しいWebhookは保存し、同じwebhookEventIdは二重に�
   assert.equal(JSON.parse(env.LINE_STORE.entries.get(messageKeys[0])).body, "内見できますか？");
 });
 
+test("保存に失敗した回は既読にせず、LINEの再送で埋め直せる", async () => {
+  const env = createEnv();
+  const store = env.LINE_STORE;
+  const originalPut = store.put.bind(store);
+  let failThreadWrite = true;
+  store.put = async (key, value, options) => {
+    if (failThreadWrite && key.startsWith("thread:")) throw new Error("KV write failed");
+    return originalPut(key, value, options);
+  };
+
+  const body = JSON.stringify(messageEvent("内見をお願いします"));
+  await withStubbedFetch(
+    () => lineOk({ displayName: "テスト太郎" }),
+    async () => {
+      const first = await handleLineRequest(signedWebhook(body), env);
+      assert.equal(first.status, 200, "LINEには200を返す");
+    },
+  );
+
+  assert.ok(
+    ![...store.entries.keys()].some((key) => key.startsWith("dedupe:")),
+    "失敗した回に既読の印を付けてはいけない",
+  );
+
+  failThreadWrite = false;
+  await withStubbedFetch(
+    () => lineOk({ displayName: "テスト太郎" }),
+    async () => {
+      await handleLineRequest(signedWebhook(body), env);
+    },
+  );
+
+  const threadsResponse = await handleLineRequest(
+    new Request("https://example.com/api/line/threads", { headers: { "x-room-pilot-key": APP_KEY } }),
+    env,
+  );
+  const { threads } = await threadsResponse.json();
+  assert.equal(threads.length, 1);
+  assert.equal(threads[0].lastBody, "内見をお願いします");
+  assert.ok([...store.entries.keys()].some((key) => key.startsWith("dedupe:")), "成功した回は既読にする");
+});
+
+test("スレッド情報が欠けても、受信済みメッセージを一覧から隠さない", async () => {
+  const env = createEnv();
+  await withStubbedFetch(
+    () => lineOk({ displayName: "テスト太郎" }),
+    async () => {
+      await handleLineRequest(signedWebhook(JSON.stringify(messageEvent("よろしくお願いします"))), env);
+    },
+  );
+
+  // スレッド情報だけを失った状態を作る
+  for (const key of [...env.LINE_STORE.entries.keys()]) {
+    if (key.startsWith("thread:")) env.LINE_STORE.entries.delete(key);
+  }
+
+  const response = await handleLineRequest(
+    new Request("https://example.com/api/line/threads", { headers: { "x-room-pilot-key": APP_KEY } }),
+    env,
+  );
+  const { threads } = await response.json();
+  assert.equal(threads.length, 1);
+  assert.equal(threads[0].lastBody, "よろしくお願いします");
+});
+
 test("画面向けAPIは合言葉がないと開けない", async () => {
   const env = createEnv();
   const response = await handleLineRequest(new Request("https://example.com/api/line/threads"), env);

@@ -200,14 +200,6 @@ async function storeInboundEvent(store, env, secret, event) {
   const existing = (await readJson(store, `thread:${threadId}`)) || { threadId, createdAt: nowIso() };
   const patch = {};
 
-  if (!existing.displayName) {
-    const profile = await fetchProfile(env, userId);
-    if (profile) {
-      patch.displayName = profile.displayName || "";
-      patch.pictureUrl = profile.pictureUrl || "";
-    }
-  }
-
   if (event.type === "follow") {
     patch.blocked = false;
     patch.followedAt = nowIso();
@@ -259,6 +251,17 @@ async function storeInboundEvent(store, env, secret, event) {
     lastDirection: "in",
     inboundCount: (Number(existing.inboundCount) || 0) + 1,
   });
+
+  // 表示名の取得は会話を保存し終えてから。ここで失敗しても会話は残る
+  if (!existing.displayName) {
+    const profile = await fetchProfile(env, userId);
+    if (profile?.displayName) {
+      await upsertThread(store, threadId, {
+        displayName: profile.displayName,
+        pictureUrl: profile.pictureUrl || "",
+      });
+    }
+  }
 }
 
 async function handleWebhook(request, env) {
@@ -286,14 +289,24 @@ async function handleWebhook(request, env) {
   const events = Array.isArray(payload.events) ? payload.events : [];
   for (const event of events) {
     const eventId = event.webhookEventId;
-    if (eventId) {
-      if (await store.get(`dedupe:${eventId}`)) continue;
-      await store.put(`dedupe:${eventId}`, "1", { expirationTtl: DEDUPE_TTL_SECONDS });
-    }
+    if (eventId && (await store.get(`dedupe:${eventId}`))) continue;
     try {
       await storeInboundEvent(store, env, secret, event);
-    } catch {
-      // 1件の失敗で残りを落とさない。LINEには200を返し、再送で埋める
+      // 印を付けるのは保存し終えてから。先に付けると、途中で落ちた回を再送で埋め直せない
+      if (eventId) await store.put(`dedupe:${eventId}`, "1", { expirationTtl: DEDUPE_TTL_SECONDS });
+    } catch (error) {
+      // 1件の失敗で残りを落とさない。LINEには200を返し、再送で埋める。
+      // 握りつぶすと原因が追えなくなるので、本文は伏せて理由だけ残す
+      console.error("storeInboundEvent failed", event.type, String(error?.stack || error));
+      try {
+        await store.put(
+          `error:${Date.now()}`,
+          JSON.stringify({ at: nowIso(), eventType: event.type, detail: String(error?.stack || error) }),
+          { expirationTtl: 60 * 60 * 24 },
+        );
+      } catch {
+        // 記録にも失敗したら諦める
+      }
     }
   }
 
@@ -359,14 +372,45 @@ async function handleStatus(env) {
   return json(result);
 }
 
+/**
+ * スレッド情報が無い相手を、受信済みメッセージから組み立て直す。
+ * 保存が途中で落ちても、届いた会話を画面から隠さないための保険。
+ */
+async function recoverThread(store, threadId) {
+  const listing = await store.list({ prefix: `msg:${threadId}:`, limit: 1000 });
+  if (!listing.keys.length) return null;
+  const newest = await readJson(store, listing.keys[listing.keys.length - 1].name);
+  return {
+    threadId,
+    displayName: "",
+    lastAt: newest?.at || "",
+    lastBody: newest?.body || "",
+    lastDirection: newest?.direction || "in",
+    inboundCount: listing.keys.length,
+    recovered: true,
+  };
+}
+
 async function handleThreads(env) {
   const store = env.LINE_STORE;
-  const listing = await store.list({ prefix: "thread:", limit: 1000 });
-  const threads = [];
-  for (const key of listing.keys) {
+  const [threadListing, aliasListing] = await Promise.all([
+    store.list({ prefix: "thread:", limit: 1000 }),
+    store.list({ prefix: "alias:", limit: 1000 }),
+  ]);
+
+  const byId = new Map();
+  for (const key of threadListing.keys) {
     const thread = await readJson(store, key.name);
-    if (thread) threads.push(publicThread(thread));
+    if (thread?.threadId) byId.set(thread.threadId, thread);
   }
+  for (const key of aliasListing.keys) {
+    const threadId = key.name.slice("alias:".length);
+    if (byId.has(threadId)) continue;
+    const recovered = await recoverThread(store, threadId);
+    if (recovered) byId.set(threadId, recovered);
+  }
+
+  const threads = [...byId.values()].map(publicThread);
   threads.sort((left, right) => String(right.lastAt).localeCompare(String(left.lastAt)));
   return json({ threads });
 }
