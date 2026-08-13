@@ -51,7 +51,7 @@ test("Workerが埋め込みHTMLを / で返す", async () => {
   assert.match(html, /<html\b[^>]*\blang=["']ja["']/i);
   assert.match(html, /<title[^>]*>[^<]*(?:[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}])[^<]*<\/title>/iu);
   assert.match(html, /ROOM\s*PILOT/i);
-  assert.match(html, /モック/);
+  assert.match(html, /<img[^>]+class="brand-logo"[^>]*>/i, "ヘッダーに公式アカウントのロゴが必要です");
 
   for (const label of ["顧客", "物件", "今日", "内見", "案件"]) {
     assert.match(html, new RegExp(label), `5タブの「${label}」が必要です`);
