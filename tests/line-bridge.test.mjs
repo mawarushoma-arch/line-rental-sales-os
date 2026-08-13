@@ -95,6 +95,21 @@ function lineOk(payload) {
   });
 }
 
+/** 一覧取得は表示名の補完でLINEを叩くので、必ずfetchを差し替えてから呼ぶ */
+function getThreads(env, profile = { displayName: "テスト太郎" }) {
+  return withStubbedFetch(
+    () => lineOk(profile),
+    async () => {
+      const response = await handleLineRequest(
+        new Request("https://example.com/api/line/threads", { headers: { "x-room-pilot-key": APP_KEY } }),
+        env,
+      );
+      const text = await response.text();
+      return { status: response.status, text, payload: JSON.parse(text) };
+    },
+  );
+}
+
 test("本文指紋は画面側とサーバー側で一致する", () => {
   const samples = [
     "承知しました。内見の候補をお送りします。",
@@ -180,13 +195,9 @@ test("保存に失敗した回は既読にせず、LINEの再送で埋め直せ�
     },
   );
 
-  const threadsResponse = await handleLineRequest(
-    new Request("https://example.com/api/line/threads", { headers: { "x-room-pilot-key": APP_KEY } }),
-    env,
-  );
-  const { threads } = await threadsResponse.json();
-  assert.equal(threads.length, 1);
-  assert.equal(threads[0].lastBody, "内見をお願いします");
+  const { payload } = await getThreads(env);
+  assert.equal(payload.threads.length, 1);
+  assert.equal(payload.threads[0].lastBody, "内見をお願いします");
   assert.ok([...store.entries.keys()].some((key) => key.startsWith("dedupe:")), "成功した回は既読にする");
 });
 
@@ -204,13 +215,10 @@ test("スレッド情報が欠けても、受信済みメッセージを一覧�
     if (key.startsWith("thread:")) env.LINE_STORE.entries.delete(key);
   }
 
-  const response = await handleLineRequest(
-    new Request("https://example.com/api/line/threads", { headers: { "x-room-pilot-key": APP_KEY } }),
-    env,
-  );
-  const { threads } = await response.json();
-  assert.equal(threads.length, 1);
-  assert.equal(threads[0].lastBody, "よろしくお願いします");
+  const { payload } = await getThreads(env);
+  assert.equal(payload.threads.length, 1);
+  assert.equal(payload.threads[0].lastBody, "よろしくお願いします");
+  assert.equal(payload.threads[0].displayName, "テスト太郎", "表示名は一覧を開いたときに補う");
 });
 
 test("画面向けAPIは合言葉がないと開けない", async () => {
@@ -228,16 +236,12 @@ test("スレッドとメッセージに生のuser IDとreplyTokenを含めない
     },
   );
 
-  const threadsResponse = await handleLineRequest(
-    new Request("https://example.com/api/line/threads", { headers: { "x-room-pilot-key": APP_KEY } }),
-    env,
-  );
-  const threadsText = await threadsResponse.text();
-  assert.equal(threadsResponse.status, 200);
+  const { status, text: threadsText, payload } = await getThreads(env);
+  assert.equal(status, 200);
   assert.ok(!threadsText.includes(USER_ID), "生のuser IDが漏れている");
   assert.ok(!threadsText.includes("reply-token-1"), "replyTokenが漏れている");
 
-  const threadId = JSON.parse(threadsText).threads[0].threadId;
+  const threadId = payload.threads[0].threadId;
   assert.equal(threadId, await threadIdFor(SECRET, USER_ID));
 
   const messagesResponse = await handleLineRequest(

@@ -251,17 +251,6 @@ async function storeInboundEvent(store, env, secret, event) {
     lastDirection: "in",
     inboundCount: (Number(existing.inboundCount) || 0) + 1,
   });
-
-  // 表示名の取得は会話を保存し終えてから。ここで失敗しても会話は残る
-  if (!existing.displayName) {
-    const profile = await fetchProfile(env, userId);
-    if (profile?.displayName) {
-      await upsertThread(store, threadId, {
-        displayName: profile.displayName,
-        pictureUrl: profile.pictureUrl || "",
-      });
-    }
-  }
 }
 
 async function handleWebhook(request, env) {
@@ -410,9 +399,32 @@ async function handleThreads(env) {
     if (recovered) byId.set(threadId, recovered);
   }
 
+  // 表示名はここで補う。Webhookは保存だけに専念させ、外部APIへは行かせない
+  await fillMissingNames(store, env, [...byId.values()]);
+
   const threads = [...byId.values()].map(publicThread);
   threads.sort((left, right) => String(right.lastAt).localeCompare(String(left.lastAt)));
   return json({ threads });
+}
+
+/** 表示名が未取得の相手だけ、一覧を開いたときにLINEへ聞きに行く */
+async function fillMissingNames(store, env, threads, limit = 5) {
+  const targets = threads.filter((thread) => !thread.displayName).slice(0, limit);
+  for (const thread of targets) {
+    const alias = await readJson(store, `alias:${thread.threadId}`);
+    if (!alias?.userId) continue;
+    const profile = await fetchProfile(env, alias.userId);
+    if (!profile?.displayName) continue;
+    thread.displayName = profile.displayName;
+    thread.pictureUrl = profile.pictureUrl || "";
+    try {
+      // 組み立て直した相手はまだ保存されていないので、丸ごと書き戻す
+      const { recovered, ...record } = thread;
+      await upsertThread(store, thread.threadId, record);
+    } catch {
+      // 保存できなくても、今回の表示には使える
+    }
+  }
 }
 
 async function handleMessages(request, env) {
