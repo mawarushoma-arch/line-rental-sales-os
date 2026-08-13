@@ -10,6 +10,8 @@ const clientRoot = path.join(distRoot, "client");
 const serverRoot = path.join(distRoot, "server");
 const requiredFiles = ["index.html", "styles.css", "app.js", "domain.mjs", "api-adapter.mjs", "model-contract.mjs"];
 
+const revalidatedExtensions = new Set([".html", ".js", ".mjs", ".css", ".json"]);
+
 const contentTypes = new Map([
   [".avif", "image/avif"],
   [".css", "text/css; charset=utf-8"],
@@ -86,7 +88,9 @@ function decodeBase64(value) {
 function embeddedResponse(asset, method) {
   const headers = new Headers({
     "content-type": asset.contentType,
-    "cache-control": asset.isDocument
+    // HTML・JS・CSSは毎回問い合わせる。デプロイ直後に古い画面が出ると、
+    // 直したつもりの不具合を追いかけることになる（304で返るので通信量は小さい）
+    "cache-control": asset.revalidate
       ? "no-cache"
       : "public, max-age=3600, must-revalidate",
   });
@@ -169,6 +173,7 @@ for (const absolutePath of files) {
     body: (await readFile(absolutePath)).toString("base64"),
     contentType: contentTypes.get(extension) ?? "application/octet-stream",
     isDocument: extension === ".html",
+    revalidate: revalidatedExtensions.has(extension),
   };
 }
 

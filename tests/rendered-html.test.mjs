@@ -167,6 +167,8 @@ test("JSが3権限状態とスワイプ・Undo・ローカル保存を備える"
     assert.match(js, new RegExp(`\\b${role}\\b`), `role=${role} のガードが必要です`);
   }
   assert.match(js, /access[-_ ]?gate|role[-_ ]?guard|guardRole|renderAccess/i);
+  // LIFFはクエリを liff.state に畳んで渡す。展開しないと社員でも制限画面になる
+  assert.match(js, /liff\.state/, "liff.state の展開が必要です");
 
   assert.match(js, /pointerdown/i);
   assert.match(js, /pointermove/i);

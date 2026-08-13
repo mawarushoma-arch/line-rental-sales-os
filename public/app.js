@@ -32,10 +32,40 @@ import {
       .replaceAll("'", "&#039;");
 
   /**
+   * LIFFから開くと、追加のパスとクエリは `liff.state` に畳まれて届く。
+   * SDKを読み込まなくても通常のURLと同じに見えるよう、ここで展開しておく。
+   * これをしないと role が読めず、社員でもアクセス制限画面になる。
+   */
+  function expandLiffState() {
+    const current = new URL(window.location.href);
+    const packed = current.searchParams.get("liff.state");
+    if (!packed) return;
+
+    let unpacked;
+    try {
+      unpacked = new URL(decodeURIComponent(packed), current.origin);
+    } catch {
+      return;
+    }
+
+    current.searchParams.delete("liff.state");
+    for (const [key, value] of unpacked.searchParams) current.searchParams.set(key, value);
+
+    const path = unpacked.pathname && unpacked.pathname !== "/" ? unpacked.pathname : current.pathname;
+    const next = `${path}${current.search}${unpacked.hash || current.hash}`;
+    if (path !== current.pathname) {
+      window.location.replace(next);
+      return;
+    }
+    window.history.replaceState(null, "", next);
+  }
+
+  /**
    * Access guard runs before any application view or mock business data is rendered.
    * employee: app / pending: employee application / customer: denied.
    */
   function guardAccessBeforeRender() {
+    expandLiffState();
     const role = new URLSearchParams(window.location.search).get("role") || "customer";
 
     if (role === "employee") {
@@ -1441,8 +1471,6 @@ import {
           ${mascot("search", "proposal-mascot")}
         </div>
 
-        ${renderProposalProgress(likedCount, skippedCount)}
-
         <div class="deck-heading">
           <h1 id="properties-title" class="deck-title">候補カード</h1>
           <span class="deck-count">${remaining.length}件</span>
@@ -1461,35 +1489,6 @@ import {
             ${renderPropertyCard(current, "current", selected.id, { cursor, total: remaining.length, likedCount, skippedCount })}
             ${next ? renderPropertyCard(next, "next", selected.id, {}) : ""}
           </div>` : adapterState.empty ? renderPropertyNoResults(selected) : hiddenByFilter ? renderDeckFilteredOut(hiddenByFilter) : renderPropertyEmpty(selected, { liked: likedCount, skipped: skippedCount })}
-      </section>`;
-  }
-
-  /**
-   * 提案が今どの段までいったかを、キャラクターの5段で示す。
-   * 判断の履歴（保存・Skip）から現在地を決めるので、営業が別途入力しなくてよい。
-   */
-  function renderProposalProgress(likedCount, skippedCount) {
-    if (!runtime.mascotsReady) return "";
-    const steps = [
-      ["proposing", "候補発見", "マッチ度が高い物件を発見！"],
-      ["todo", "提案前", "内容を確認して提案準備中"],
-      ["done", "保存済", "気になる物件を保存しました"],
-      ["viewing", "内見提案", "お客様に提案して内見を案内！"],
-      ["applying", "次へ", "内見後のフォローで次の提案へ！"],
-    ];
-    const active = likedCount >= 3 ? 3 : likedCount >= 1 ? 2 : skippedCount >= 1 ? 1 : 0;
-    return `
-      <section class="card progress-card" aria-label="提案の進み具合">
-        <p class="progress-title">提案の進み具合</p>
-        <ol class="progress-steps">
-          ${steps.map(([art, label, copy], index) => `
-            <li class="progress-step${index === active ? " is-active" : ""}${index < active ? " is-done" : ""}">
-              <span class="progress-index">${index + 1}</span>
-              ${statusArt(art, "progress-art")}
-              <span class="progress-label">${escapeHTML(label)}</span>
-              <span class="progress-copy">${escapeHTML(copy)}</span>
-            </li>`).join("")}
-        </ol>
       </section>`;
   }
 
