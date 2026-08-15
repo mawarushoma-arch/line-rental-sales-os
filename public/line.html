@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="color-scheme" content="light" />
+    <meta name="theme-color" content="#FFFFFF" />
+    <meta name="robots" content="noindex, nofollow" />
+    <meta name="description" content="ROOM PILOTの公式LINE実機テスト画面。実際の公式アカウントで送受信を確認します。" />
+    <title>公式LINE実機テスト｜ROOM PILOT</title>
+    <link rel="stylesheet" href="/styles.css" />
+    <link rel="stylesheet" href="/line-test.css" />
+    <script type="module" src="/line-test.js"></script>
+  </head>
+  <body class="line-page">
+    <header class="line-topbar">
+      <a class="line-back" href="/" aria-label="ROOM PILOTへ戻る">‹</a>
+      <div class="line-brand" id="bot-brand">
+        <img class="brand-logo" src="/brand/header.png" width="613" height="96" alt="それ、LINEでええやん。｜不動産" />
+        <p class="line-brand-meta">接続を確認しています…</p>
+      </div>
+      <button class="line-refresh" type="button" data-action="refresh" aria-label="再読み込み">↻</button>
+    </header>
+
+    <div class="line-chips" id="status-chips" aria-live="polite"></div>
+
+    <main id="line-main" class="line-main" tabindex="-1"></main>
+
+    <div id="line-toast" class="line-toast" role="status" aria-live="polite" aria-atomic="true"></div>
+
+    <noscript>
+      <div class="noscript-card">この画面を使うにはJavaScriptを有効にしてください。</div>
+    </noscript>
+  </body>
+</html>

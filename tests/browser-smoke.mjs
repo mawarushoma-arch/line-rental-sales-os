@@ -310,7 +310,7 @@ async function run() {
   // 0件モードではカードが出ないので、何を待つかを呼び出し側で選ぶ
   const selectCustomer = async (customerId = "c1", expect = "card") => {
     await click('[data-tab="customers"]');
-    await waitFor("document.querySelector('#customers-title')?.textContent === '顧客'", "customers tab");
+    await waitFor("document.querySelector('#customers-title')?.textContent.startsWith('顧客') === true", "customers tab");
     await click(`[data-action="open-customer"][data-id="${customerId}"]`);
     await waitFor("Boolean(document.querySelector('#customer-detail-title'))", "customer detail sheet");
     await click(`[data-action="select-customer"][data-id="${customerId}"]`);
@@ -371,13 +371,13 @@ async function run() {
         host: location.host,
         hasModuleEntry: Boolean(document.querySelector('script[type="module"][src="/app.js"]')),
         bootstrapFetches: globalThis.__roomPilotSmoke.fetches.filter((item) => item.url.endsWith('/api/mock/bootstrap')).length,
-        title: document.querySelector('.page-title, .empty-title')?.textContent.trim()
+        title: document.querySelector('.hero-title, .page-title, .empty-title')?.textContent.trim()
       })`);
       assert.equal(state.protocol, "https:");
       assert.equal(state.host, "room-pilot.test");
       assert.equal(state.hasModuleEntry, true);
       assert.equal(state.bootstrapFetches, 1);
-      assert.match(state.title, /今日の操縦席/u);
+      assert.match(state.title, /今日も良い一日/u);
       assert.deepEqual(runtimeErrors, [], `no runtime exceptions: ${runtimeErrors.join(" | ")}`);
       assert.deepEqual(buildRequestErrors, [], `no Worker request errors: ${buildRequestErrors.join(" | ")}`);
     });
@@ -386,7 +386,7 @@ async function run() {
       const expectedHeadings = {
         customers: "顧客",
         properties: "物件",
-        today: "今日の操縦席",
+        today: "今日も良い一日",
         viewings: "内見",
         cases: "案件",
       };
@@ -399,7 +399,7 @@ async function run() {
             `document.querySelector('[data-tab="${tab}"]')?.getAttribute('aria-current') === 'page'`,
             `${tab} selected`,
           );
-          const title = await evaluate("document.querySelector('.page-title, .empty-title')?.textContent.trim()");
+          const title = await evaluate("document.querySelector('.hero-title, .deck-title, .page-title, .empty-title')?.textContent.trim()");
           assert.ok(title.includes(heading), `${tab} heading is visible at ${width}px (actual=${title})`);
           await assertNoHorizontalOverflow(`${width}px/${tab}`);
         }
@@ -498,7 +498,7 @@ async function run() {
         stored: JSON.parse(localStorage.getItem('room-pilot:v2')).displayPreference.widgets
       })`);
       assert.equal(setting.hasTimeline, false);
-      assert.equal(setting.firstSection, "期限");
+      assert.ok(setting.firstSection?.startsWith("期限"), `first section is the deadline widget (actual=${setting.firstSection})`);
       assert.deepEqual(setting.stored, ["deadlines", "priority", "recommendation"]);
     });
 

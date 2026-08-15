@@ -32,10 +32,40 @@ import {
       .replaceAll("'", "&#039;");
 
   /**
+   * LIFFから開くと、追加のパスとクエリは `liff.state` に畳まれて届く。
+   * SDKを読み込まなくても通常のURLと同じに見えるよう、ここで展開しておく。
+   * これをしないと role が読めず、社員でもアクセス制限画面になる。
+   */
+  function expandLiffState() {
+    const current = new URL(window.location.href);
+    const packed = current.searchParams.get("liff.state");
+    if (!packed) return;
+
+    let unpacked;
+    try {
+      unpacked = new URL(decodeURIComponent(packed), current.origin);
+    } catch {
+      return;
+    }
+
+    current.searchParams.delete("liff.state");
+    for (const [key, value] of unpacked.searchParams) current.searchParams.set(key, value);
+
+    const path = unpacked.pathname && unpacked.pathname !== "/" ? unpacked.pathname : current.pathname;
+    const next = `${path}${current.search}${unpacked.hash || current.hash}`;
+    if (path !== current.pathname) {
+      window.location.replace(next);
+      return;
+    }
+    window.history.replaceState(null, "", next);
+  }
+
+  /**
    * Access guard runs before any application view or mock business data is rendered.
    * employee: app / pending: employee application / customer: denied.
    */
   function guardAccessBeforeRender() {
+    expandLiffState();
     const role = new URLSearchParams(window.location.search).get("role") || "customer";
 
     if (role === "employee") {
@@ -51,11 +81,7 @@ import {
       accessGate.innerHTML = `
         <section class="access-panel" aria-labelledby="access-title">
           <div class="access-brand">
-            <span class="brand-mark" aria-hidden="true">R</span>
-            <div>
-              <p class="brand-name">ROOM PILOT</p>
-              <p class="brand-subtitle">LINE賃貸営業OS <span class="mock-badge">モック</span></p>
-            </div>
+            <img class="brand-logo" src="/brand/header.png" width="613" height="96" alt="それ、LINEでええやん。｜不動産" />
           </div>
           <div class="access-main">
             <div class="access-illustration" aria-hidden="true">⌛</div>
@@ -75,11 +101,7 @@ import {
       accessGate.innerHTML = `
         <section class="access-panel" aria-labelledby="access-title">
           <div class="access-brand">
-            <span class="brand-mark" aria-hidden="true">R</span>
-            <div>
-              <p class="brand-name">ROOM PILOT</p>
-              <p class="brand-subtitle">LINE賃貸営業OS <span class="mock-badge">モック</span></p>
-            </div>
+            <img class="brand-logo" src="/brand/header.png" width="613" height="96" alt="それ、LINEでええやん。｜不動産" />
           </div>
           <div class="access-main">
             <div class="access-illustration" aria-hidden="true">×</div>
@@ -163,10 +185,37 @@ import {
   const STORAGE_KEY = `room-pilot:v${APP_VERSION}`;
   const VALID_TABS = ["customers", "properties", "today", "viewings", "cases"];
   const WIDGET_KEYS = ["priority", "recommendation", "deadlines", "timeline"];
-  const PROPERTY_FIELD_KEYS = ["listing", "ad", "rent", "management", "address", "viewing", "moveIn", "initialCost", "note"];
+  const PROPERTY_FIELD_KEYS = ["listing", "ad", "rent", "address", "layout", "management", "viewing", "moveIn", "initialCost", "note"];
   const REDUCED_MOTION = window.matchMedia("(prefers-reduced-motion: reduce)");
   const MOCK_NOW = Date.parse("2026-08-11T11:20:00+09:00");
   const UNDO_SECONDS = 8;
+  // 仕分けの並び替え。営業がその場で切り替える軸だけに絞る。
+  const DECK_SORTS = [
+    { id: "match", label: "マッチ度順" },
+    { id: "rent", label: "家賃が安い順" },
+    { id: "ad", label: "AD高い順" },
+    { id: "new", label: "新着順" },
+  ];
+  // マッチした条件は単語のままだと営業が顧客へ言い換える手間が残るので、説明文で持つ。
+  const MATCH_REASON_COPY = {
+    希望沿線: "希望の沿線・エリアに入っています",
+    日当たり: "日当たりの希望を満たしています",
+    予算内: "管理費込みで予算の範囲です",
+    "駅徒歩10分以内": "駅から徒歩10分以内です",
+    間取り: "希望の間取りタイプに合っています",
+    入居時期: "希望の入居時期に間に合います",
+    在宅スペース: "在宅ワーク用のスペースが取れます",
+    築浅: "築年数が希望より新しめです",
+    管理費込予算: "管理費を含めても予算内です",
+    初期費用: "初期費用が想定の範囲に収まります",
+    収納: "収納量の希望を満たしています",
+    内見可能日: "内見できる日が顧客の都合と合います",
+  };
+  const DECK_FILTERS = [
+    { id: "hideClosed", label: "募集終了を隠す", copy: "申込あり・募集終了のうち、募集終了だけを外します" },
+    { id: "viewableToday", label: "本日内見できる物件だけ", copy: "内見可否が「本日可」のものに絞ります" },
+    { id: "hideStale", label: "鮮度が古い物件を隠す", copy: "更新から24時間を超えたものを外します" },
+  ];
 
   const propertySeeds = [
     ["中目黒リバーサイド", "中目黒駅 徒歩6分・1LDK 38.2㎡", 18.2, 1.2, "photo-1522708323590-d24dbb6b0267"],
@@ -408,6 +457,9 @@ import {
     rentYen: Math.round(seed[2] * 10_000),
     managementFeeYen: Math.round(seed[3] * 10_000),
     imageUrl: `https://images.unsplash.com/${seed[4]}?auto=format&fit=crop&w=900&q=82`,
+    // 本番はここへITANDIの物件資料の間取り図を入れる。カードは間取り図を優先し、
+    // 無い物件だけ室内写真へ落とす（モックは間取り図を持たないのでnull固定）。
+    floorPlanUrl: null,
     listingStatus: index === 13 ? "募集終了" : index % 6 === 0 ? "申込あり" : "募集中",
     listedAt: index % 3 === 0
       ? "2026-08-11T09:00:00+09:00"
@@ -561,7 +613,8 @@ import {
       { id: "ad", label: "AD", description: "社内限定の広告料情報" },
       { id: "rent", label: "賃料", description: "月額賃料" },
       { id: "management", label: "管理費", description: "共益費を含む月額" },
-      { id: "address", label: "場所", description: "駅・徒歩・間取り" },
+      { id: "address", label: "場所", description: "最寄駅と徒歩分数" },
+      { id: "layout", label: "間取り", description: "間取りタイプと専有面積" },
       { id: "viewing", label: "内見可否", description: "最新確認状態" },
       { id: "moveIn", label: "入居可能日", description: "入居開始の目安" },
       { id: "initialCost", label: "初期費用概算", description: "円単位モデルから表示" },
@@ -585,6 +638,34 @@ import {
   const INTERNAL_REPLY_FRAGMENTS = [
     ...Property.flatMap((property) => Object.values(property.internal || {})),
     ...Viewing.map((viewing) => viewing.keyNote),
+  ];
+
+  /**
+   * 公式LINEのトーク。direction は in=顧客から / out=営業から。
+   * 本番はWebhookで受けた本文をサーバーへ保存し、この形へ正規化して配る。
+   * 送信も同じくサーバー経由で、営業の承認記録が揃ったときだけMessaging APIを呼ぶ。
+   */
+  const talkSeeds = {
+    c1: [
+      ["in", "09:42", "ありがとうございます。日当たりも重視したいです。"],
+      ["out", "09:48", "承知しました。仕事スペースも含めて候補を整理します。"],
+      ["in", "10:05", "週末の午前なら内見できます。"],
+    ],
+    c2: [["in", "11:16", "はじめまして。9月上旬までに引っ越したいのですが、相談できますか？"]],
+    c3: [
+      ["in", "10:02", "三軒茶屋あたりで探しています。収納が多い部屋が希望です。"],
+      ["out", "10:14", "承知しました。本日13:30の内見枠を確保しています。"],
+    ],
+    c4: [
+      ["out", "昨日 18:20", "初期費用の明細をお送りします。ご確認ください。"],
+      ["in", "昨日 21:05", "ありがとうございます。明日確認します。"],
+    ],
+  };
+  const INCOMING_SAMPLES = [
+    "先ほどの物件、駅からの道は明るいですか？",
+    "内見は土曜の午前でも大丈夫でしょうか。",
+    "初期費用はもう少し抑えられますか？",
+    "ペット可の物件も見てみたいです。",
   ];
 
   function createDefaultState() {
@@ -646,6 +727,7 @@ import {
   let state = loadState();
   const runtime = {
     customerFilter: "all",
+    customerOwner: "all",
     customerSearch: "",
     viewingRange: "today",
     completedTodayActions: new Set(),
@@ -658,6 +740,28 @@ import {
     deckCursor: 0,
     deckSlide: null,
     suppressCardClick: false,
+    deckSort: "match",
+    deckFilters: { hideClosed: false, viewableToday: false, hideStale: false },
+    deckMenuOpen: false,
+    talks: new Map(
+      Object.entries(talkSeeds).map(([customerId, rows]) => [
+        customerId,
+        rows.map(([direction, at, body], index) => ({
+          id: `${customerId}-m${index + 1}`,
+          customerId,
+          direction,
+          at,
+          body,
+          status: direction === "in" ? "received" : "sent",
+        })),
+      ]),
+    ),
+    talkDraft: "",
+    talkCustomerId: null,
+    incomingCount: 0,
+    // 挿し絵は public/mascot/ に素材があるときだけ描く
+    mascotsReady: true,
+    calendarOffset: 0,
   };
   const replyGateway = new MockApprovedReplyGateway();
   let undoTimer = 0;
@@ -712,12 +816,162 @@ import {
     return effectiveCandidateStatus(relation?.status, state.decisions[customerId], propertyId);
   }
 
+  /**
+   * マスコットの挿し絵。画像が用意できたキーだけ描く。
+   * 未用意のキーは何も出さないので、素材が揃うまでレイアウトが崩れない。
+   */
+  const MASCOTS = {
+    hero: "/mascot/hero.png",
+    search: "/mascot/search.png",
+    checklist: "/mascot/checklist.png",
+    line: "/mascot/line.png",
+    doc: "/mascot/doc.png",
+    house: "/mascot/house.png",
+    idea: "/mascot/idea.png",
+    map: "/mascot/map.png",
+  };
+
+  function mascot(key, className) {
+    const source = MASCOTS[key];
+    if (!source || !runtime.mascotsReady) return "";
+    return `<img class="mascot ${className}" src="${escapeHTML(source)}" alt="" draggable="false" />`;
+  }
+
+  /**
+   * ステータスは「色のピル」だけでなく「キャラクターの姿」でも示す。
+   * 一覧を流し見しているときに、読まずに状態が分かることを狙う。
+   * tone は状態色（todo=グレー / urgent=赤 / progress=アンバー / waiting=青 / done=緑）。
+   */
+  const STATUS_ART = {
+    todo: { art: "todo", tone: "neutral", label: "未着手", copy: "まだ始めていない" },
+    urgent: { art: "urgent", tone: "danger", label: "要対応", copy: "早めの対応が必要" },
+    progress: { art: "progress", tone: "warning", label: "進行中", copy: "対応を進めている" },
+    waiting: { art: "waiting", tone: "info", label: "確認待ち", copy: "確認・返答待ち" },
+    proposing: { art: "proposing", tone: "info", label: "提案中", copy: "提案を行っている" },
+    viewing: { art: "viewing", tone: "info", label: "内見中", copy: "内見を案内している" },
+    applying: { art: "applying", tone: "warning", label: "申込準備", copy: "申込に向けて準備中" },
+    done: { art: "done", tone: "success", label: "完了", copy: "すべて完了した" },
+    hold: { art: "hold", tone: "neutral", label: "保留", copy: "一時的に保留している" },
+    recheck: { art: "recheck", tone: "danger", label: "要再確認", copy: "確認・対応が必要です" },
+    // 内見の道中だけの姿。一覧表には無く、内見ステータスの凡例から切り出したもの。
+    moving: { art: "moving", tone: "warning", label: "移動前", copy: "これから移動" },
+    key: { art: "key", tone: "success", label: "鍵確認中", copy: "到着・鍵確認中" },
+  };
+
+  /** 顧客の12ステータスを、キャラクターの10状態へ寄せる。 */
+  const CUSTOMER_STATUS_ART = {
+    新規: "todo",
+    条件確認中: "urgent",
+    物件提案中: "proposing",
+    内見調整中: "viewing",
+    内見待ち: "waiting",
+    書類待ち: "applying",
+    申込済: "applying",
+    審査中: "waiting",
+    契約準備: "applying",
+    契約済: "done",
+    保留: "hold",
+    失注: "recheck",
+  };
+
+  const CASE_STAGE_ART = {
+    追客中: "proposing",
+    内見調整: "viewing",
+    申込準備: "applying",
+    審査中: "waiting",
+    契約準備: "applying",
+    契約済: "done",
+  };
+
+  const VIEWING_STATUS_ART = { 確定: "progress", 確認待ち: "waiting", 仮押さえ: "hold" };
+
+  function statusArt(key, className = "status-art") {
+    const entry = STATUS_ART[key];
+    if (!entry || !runtime.mascotsReady) return "";
+    return `<img class="mascot ${className}" src="/mascot/status/${entry.art}.png" alt="" draggable="false" />`;
+  }
+
+  /** 画面上部に置く凡例。どのキャラがどの状態かを、その画面の言葉で説明する。 */
+  function renderStatusLegend(title, keys, labels = {}) {
+    if (!runtime.mascotsReady) return "";
+    return `
+      <section class="card legend-card" aria-label="${escapeHTML(title)}">
+        <p class="legend-title">${escapeHTML(title)}</p>
+        <ol class="legend-list">
+          ${keys.map((key, index) => {
+            const entry = STATUS_ART[key];
+            const override = labels[key] || {};
+            return `<li class="legend-item">
+              ${index > 0 ? '<span class="legend-arrow" aria-hidden="true">›</span>' : ""}
+              <span class="legend-body">
+                ${statusArt(key, "legend-art")}
+                <span class="status-pill ${entry.tone}">${escapeHTML(override.label || entry.label)}</span>
+                <span class="legend-copy">${escapeHTML(override.copy || entry.copy)}</span>
+              </span>
+            </li>`;
+          }).join("")}
+        </ol>
+      </section>`;
+  }
+
+  /** 保存＝しおりを挟む操作なので、好意を表すハートではなくブックマークで示す。 */
+  const SAVE_ICON =
+    '<svg class="icon-glyph" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M7 3.5h10a1.5 1.5 0 0 1 1.5 1.5v15.1a.9.9 0 0 1-1.38.76L12 17.4l-5.12 3.46A.9.9 0 0 1 5.5 20.1V5A1.5 1.5 0 0 1 7 3.5Z" fill="currentColor"/></svg>';
+
+  /** 本番は物件資料の間取り図を出す。無い物件だけ室内写真へ落とす。 */
+  function propertyVisual(property) {
+    if (property.floorPlanUrl) return { url: property.floorPlanUrl, kind: "is-floorplan", label: "間取り図" };
+    return { url: property.imageUrl, kind: "is-photo", label: "室内写真（間取り図は未提供）" };
+  }
+
+  /** 住所文字列は「駅徒歩・間取り」で持っているので、表示側で2項目へ割る。 */
+  function propertyPlaceParts(property) {
+    const [walk, layout] = String(property.address).split("・");
+    return [walk?.trim() || "所在 未確認", layout?.trim() || "間取り 未確認"];
+  }
+
+  function listingTone(listingStatus) {
+    if (listingStatus === "募集終了") return "urgent";
+    if (listingStatus === "申込あり") return "warning";
+    return "success";
+  }
+
+  /** ADは率だけだと手取りが見えないので、賃料から換算した金額と併記する。 */
+  function adBreakdown(property) {
+    const percent = adValue(property);
+    if (!percent) return { percent: 0, amount: 0, label: "AD 未確認" };
+    const amount = Math.round((property.rentYen * percent) / 100);
+    return { percent, amount, label: `${amount.toLocaleString("ja-JP")}円 / ${percent}%` };
+  }
+
+  function adValue(property) {
+    const parsed = Number.parseInt(String(property.internal?.ad || "").replace(/[^0-9]/g, ""), 10);
+    return Number.isFinite(parsed) ? parsed : 0;
+  }
+
   function matchingPropertiesForCustomer(customerId) {
-    return [...Property].sort((left, right) => {
-      const leftScore = candidateByIds(customerId, left.id)?.matchScore ?? 0;
-      const rightScore = candidateByIds(customerId, right.id)?.matchScore ?? 0;
-      return rightScore - leftScore;
-    });
+    const score = (property) => candidateByIds(customerId, property.id)?.matchScore ?? 0;
+    // 同点は必ずマッチ度で決着させ、並び替えを切り替えても順序がぶれないようにする。
+    const comparators = {
+      match: (left, right) => score(right) - score(left),
+      rent: (left, right) =>
+        left.rentYen + left.managementFeeYen - (right.rentYen + right.managementFeeYen) || score(right) - score(left),
+      ad: (left, right) => adValue(right) - adValue(left) || score(right) - score(left),
+      new: (left, right) => Date.parse(right.listedAt) - Date.parse(left.listedAt) || score(right) - score(left),
+    };
+    return [...Property].sort(comparators[runtime.deckSort] || comparators.match);
+  }
+
+  function passesDeckFilters(property) {
+    const filters = runtime.deckFilters;
+    if (filters.hideClosed && property.listingStatus === "募集終了") return false;
+    if (filters.viewableToday && property.viewingAvailable !== "本日可") return false;
+    if (filters.hideStale && propertyIsStale(property)) return false;
+    return true;
+  }
+
+  function activeDeckFilterCount() {
+    return Object.values(runtime.deckFilters).filter(Boolean).length;
   }
 
   function isTodayActionDone(item) {
@@ -877,6 +1131,7 @@ import {
   function setActiveTab(tab) {
     if (!VALID_TABS.includes(tab) || tab === state.activeTab) return;
     if (runtime.undo) clearUndoToast();
+    runtime.deckMenuOpen = false;
     closeModal();
     state.activeTab = tab;
     const saved = persistState();
@@ -900,44 +1155,53 @@ import {
         <section class="section" aria-labelledby="priority-heading">
           <div class="section-heading">
             <h2 id="priority-heading" class="section-title">優先アクション</h2>
-            <span class="section-note">上から順に進める</span>
+            <button class="link-more" type="button" data-action="go-tab" data-tab-target="cases">すべて見る<span aria-hidden="true">›</span></button>
           </div>
-          ${priorities.slice(0, 3).map((item, index) => renderPriorityAction(item, index)).join("")}
+          <div class="card list-card">
+            <ul class="action-list">
+              ${priorities.slice(0, 3).map((item, index) => renderPriorityAction(item, index)).join("")}
+            </ul>
+          </div>
         </section>`,
       recommendation: `
         <section class="section" aria-labelledby="recommend-heading">
           <div class="section-heading">
             <h2 id="recommend-heading" class="section-title">推奨する1操作</h2>
-            <span class="mini-badge">AI補助</span>
+            <span class="section-note accent"><span aria-hidden="true">✦</span> AIサポート</span>
           </div>
           <div class="card recommend-card">
-            <div class="row" style="gap: 13px; align-items: flex-start;">
+            <div class="recommend-top">
               <span class="recommend-mark" aria-hidden="true">${replySent ? "✓" : "↗"}</span>
-              <div>
+              <div class="recommend-copy">
                 <h3 class="card-title">${replySent ? "石井さんへ返信済み" : "石井さんへの返信案を確認"}</h3>
                 <p class="card-copy">${replySent ? "営業確認後の本文をモック送信記録へ保存しました。" : "初回返信を先に終えると、希望条件の回収と候補提案が今日中につながります。"}</p>
               </div>
+              ${mascot("idea", "recommend-mascot")}
             </div>
-            ${replySent ? '<button class="ghost-button wide-button" type="button" data-action="open-reply">送信記録を確認</button>' : '<button class="primary-button wide-button" type="button" data-action="open-reply">返信案を確認する</button>'}
+            <button class="primary-button wide-button" type="button" data-action="open-reply">${replySent ? "送信記録を確認" : "返信案を確認する"}</button>
           </div>
         </section>`,
       deadlines: `
         <section class="section" aria-labelledby="deadline-heading">
           <div class="section-heading">
-            <h2 id="deadline-heading" class="section-title">期限</h2>
-            <span class="section-note">2件</span>
+            <h2 id="deadline-heading" class="section-title">期限・リマインダー</h2>
+            <button class="link-more" type="button" data-action="go-tab" data-tab-target="cases">すべて見る<span aria-hidden="true">›</span></button>
           </div>
-          <ul class="deadline-list">
-            ${deadlines.map((item) => {
-              const customer = customerById(item.customerId);
-              const [day, time] = dueCalendarLabel(item.dueAt).split(" ");
-              return `<li><button class="deadline-row" type="button" data-action="open-customer" data-id="${customer.id}">
-                <span class="deadline-date">${escapeHTML(day)}<br />${escapeHTML(time || "")}</span>
-                <div class="deadline-main"><p class="deadline-title">${escapeHTML(item.title)}</p><p class="person-meta">${escapeHTML(customer.name)} · ${escapeHTML(item.action)}</p></div>
-                <span class="chevron" aria-hidden="true">›</span>
-              </button></li>`;
-            }).join("")}
-          </ul>
+          <div class="card list-card">
+            <ul class="deadline-list">
+              ${deadlines.map((item) => {
+                const customer = customerById(item.customerId);
+                const [day, time] = dueCalendarLabel(item.dueAt).split(" ");
+                const soon = day === "今日";
+                return `<li><button class="deadline-row" type="button" data-action="open-customer" data-id="${customer.id}">
+                  <span class="deadline-date ${soon ? "is-today" : "is-later"}"><span class="deadline-day">${escapeHTML(day)}</span><span class="deadline-time">${escapeHTML(time || "")}</span></span>
+                  <span class="deadline-bar ${soon ? "is-today" : "is-later"}" aria-hidden="true"></span>
+                  <div class="deadline-main"><p class="deadline-title">${escapeHTML(item.title)}</p><p class="deadline-sub">${escapeHTML(customer.name)} · ${escapeHTML(item.action)}</p></div>
+                  <span class="chevron" aria-hidden="true">›</span>
+                </button></li>`;
+              }).join("")}
+            </ul>
+          </div>
         </section>`,
       timeline: `
         <section class="section" aria-labelledby="timeline-heading">
@@ -955,18 +1219,34 @@ import {
     };
     return `
       <section class="view" aria-labelledby="today-title">
-        <header class="view-header">
-          <div>
-            <p class="eyebrow">GOOD MORNING, 佐藤さん</p>
-            <h1 id="today-title" class="page-title">今日の操縦席</h1>
+        <header class="hero">
+          <div class="hero-copy">
+            <p class="eyebrow"><span class="eyebrow-icon" aria-hidden="true">☀</span>GOOD MORNING, 佐藤さん</p>
+            <h1 id="today-title" class="hero-title">今日も良い一日に<br />しましょう！</h1>
+            <p class="hero-meta"><span class="hero-icon" aria-hidden="true">📅</span>8月11日 火曜日</p>
           </div>
-          <p class="date-chip">8月11日 火</p>
+          ${mascot("hero", "hero-mascot")}
         </header>
         ${renderFreshnessWarning("空室・鍵・金額は、提案と内見の前に再確認してください")}
+        ${renderStatusLegend("タスクの進行ステータス", ["todo", "urgent", "progress", "waiting", "done"])}
 
-        <div class="summary-grid" aria-label="本日の概要">
-          <div class="metric-card"><span class="metric-label">優先アクション</span><strong class="metric-value">${priorities.length}<span class="metric-unit">件</span></strong></div>
-          <div class="metric-card"><span class="metric-label">本日の内見</span><strong class="metric-value">2<span class="metric-unit">組</span></strong></div>
+        <div class="metric-grid" aria-label="本日の概要">
+          <div class="metric-card">
+            <span class="metric-icon" aria-hidden="true">☑</span>
+            <div class="metric-body">
+              <p class="metric-label">優先アクション</p>
+              <p class="metric-value">${priorities.length}<span class="metric-unit">件</span></p>
+              <p class="metric-note">期限内の対応</p>
+            </div>
+          </div>
+          <div class="metric-card">
+            <span class="metric-icon" aria-hidden="true">⌂</span>
+            <div class="metric-body">
+              <p class="metric-label">本日の内見</p>
+              <p class="metric-value">2<span class="metric-unit">組</span></p>
+              <p class="metric-note">確定済みの内見</p>
+            </div>
+          </div>
         </div>
         ${state.displayPreference.widgets.map((key) => widgets[key] || "").join("")}
 
@@ -990,46 +1270,57 @@ import {
           ? "担当取得へ進む"
           : `${item.title}を${done ? "未完了に戻す" : "完了にする"}`;
     return `
-      <article class="card priority-card${done ? " is-done" : ""}">
-        <div class="card-body">
-          <div class="priority-top">
-            <span class="priority-index" aria-hidden="true">0${index + 1}</span>
-            <div class="priority-main">
-              <h3 class="card-title">${done ? "完了 · " : ""}${escapeHTML(item.title)}</h3>
-              <p class="card-copy">${escapeHTML(customer.name)} · ${escapeHTML(customer.status)}</p>
-              <div class="priority-meta"><span class="status-pill ${item.urgency}">${escapeHTML(priorityDueLabel(item))}</span><span class="status-pill neutral">${escapeHTML(item.action)}</span></div>
-            </div>
-            <button class="icon-button" type="button" data-action="${processAction}" data-id="${processId}" ${lockedDone ? "disabled" : ""} aria-label="${escapeHTML(controlLabel)}">${lockedDone ? "✓" : item.id === "ta2" || item.id === "ta6" ? "→" : done ? "↶" : "✓"}</button>
-          </div>
+      <li class="action-row${done ? " is-done" : ""}">
+        <span class="action-index" aria-hidden="true">0${index + 1}</span>
+        <div class="action-main">
+          <p class="action-title">${done ? "完了 · " : ""}${escapeHTML(item.title)}</p>
+          <p class="action-sub">${escapeHTML(customer.name)} · ${escapeHTML(customer.status)}</p>
+          <div class="action-tags"><span class="status-pill ${item.urgency}">${escapeHTML(priorityDueLabel(item))}</span><span class="status-pill neutral">${escapeHTML(item.action)}</span></div>
         </div>
-      </article>`;
+        ${statusArt(item.urgency === "urgent" ? "urgent" : done ? "done" : "progress", "action-mascot")}
+        <button class="action-button" type="button" data-action="${processAction}" data-id="${processId}" ${lockedDone ? "disabled" : ""} aria-label="${escapeHTML(controlLabel)}">${lockedDone ? "✓" : item.id === "ta2" || item.id === "ta6" ? "→" : done ? "↶" : "✓"}</button>
+      </li>`;
   }
 
   function renderCustomers() {
     const unassigned = Customer.filter((customer) => customer.unassigned);
     return `
       <section class="view" aria-labelledby="customers-title">
-        <header class="view-header">
-          <div><p class="eyebrow">CUSTOMERS</p><h1 id="customers-title" class="page-title">顧客</h1></div>
-          <span class="date-chip">全 ${Customer.length}名</span>
+        <header class="hero">
+          <div class="hero-copy">
+            <p class="eyebrow">CUSTOMERS</p>
+            <h1 id="customers-title" class="hero-title">顧客一覧</h1>
+            <p class="hero-lead">お客様の進捗をキャラクターで一目で確認できます</p>
+          </div>
+          ${mascot("hero", "hero-mascot")}
         </header>
+        ${renderStatusLegend("ステータスの見方", ["todo", "proposing", "viewing", "applying", "done"], {
+          todo: { label: "未割当", copy: "担当がまだ決まっていない" },
+          proposing: { label: "追客中", copy: "物件を提案している" },
+          viewing: { label: "内見調整", copy: "内見の日程を調整中" },
+          applying: { label: "書類待ち", copy: "申込書類を待っている" },
+          done: { label: "契約済", copy: "契約が完了した" },
+        })}
 
         <section class="card inbox-card" aria-labelledby="inbox-title">
           <div class="inbox-head">
-            <div><h2 id="inbox-title" class="card-title">未割当箱</h2><p class="card-copy">新着を取りこぼさない</p></div>
-            <span class="count-badge">${unassigned.length}</span>
+            <span class="inbox-mascot-wrap">${mascot("checklist", "inbox-mascot")}<span class="count-badge floating">${unassigned.length}</span></span>
+            <div class="inbox-copy">
+              <h2 id="inbox-title" class="card-title">未割当箱</h2>
+              <p class="card-copy">未割当のリードがあります</p>
+              ${unassigned.slice(0, 1).map((customer) => `<p class="inbox-name"><span class="meta-icon" aria-hidden="true">◍</span>${escapeHTML(customer.name)}</p>`).join("")}
+            </div>
+            ${unassigned.slice(0, 1).map((customer) => `<button class="primary-button compact-button" type="button" data-action="open-customer" data-id="${customer.id}">確認<span aria-hidden="true">›</span></button>`).join("")}
           </div>
-          ${unassigned.slice(0, 1).map((customer) => `<div class="inbox-person">
-            <span class="person-avatar accent" aria-hidden="true">${escapeHTML(customer.name.slice(0, 1))}</span>
-            <div class="person-main"><p class="person-name">${escapeHTML(customer.name)}</p><p class="person-meta">${escapeHTML(customer.source)} · ${escapeHTML(relativeCustomerTime(customer.lastContactAt))}</p></div>
-            <button class="primary-button compact-button" type="button" data-action="open-customer" data-id="${customer.id}">確認</button>
-          </div>`).join("")}
         </section>
 
-        <div class="search-wrap">
-          <span class="search-icon" aria-hidden="true">⌕</span>
-          <label class="sr-only" for="customer-search">顧客を検索</label>
-          <input id="customer-search" class="search-input" type="search" placeholder="名前・条件・流入元で検索" autocomplete="off" value="${escapeHTML(runtime.customerSearch)}" />
+        <div class="search-line">
+          <div class="search-wrap">
+            <span class="search-icon" aria-hidden="true">⌕</span>
+            <label class="sr-only" for="customer-search">顧客を検索</label>
+            <input id="customer-search" class="search-input" type="search" placeholder="名前・条件・流入元で検索" autocomplete="off" value="${escapeHTML(runtime.customerSearch)}" />
+          </div>
+          <button class="ghost-button filter-button" type="button" data-action="open-customer-filters"><span aria-hidden="true">⚗</span>絞り込み</button>
         </div>
         <div class="filter-row" aria-label="顧客フィルター">
           ${[
@@ -1037,7 +1328,7 @@ import {
             ["urgent", "要対応"],
             ["unassigned", "未割当"],
             ["followup", "追客中"],
-          ].map(([id, label]) => `<button class="filter-chip" type="button" data-action="customer-filter" data-filter="${id}" aria-pressed="${runtime.customerFilter === id}">${label}</button>`).join("")}
+          ].map(([id, label]) => `<button class="filter-chip" type="button" data-action="customer-filter" data-filter="${id}" aria-pressed="${runtime.customerFilter === id}">${label}<span class="chip-count">${customerFilterCount(id)}</span></button>`).join("")}
         </div>
 
         <section class="section" aria-labelledby="customer-list-heading">
@@ -1047,17 +1338,83 @@ import {
       </section>`;
   }
 
+  /** 顧客カード1枚。上段=誰か、下段=次に何をするか、の2段構成にする。 */
+  function renderCustomerCard(customer) {
+    const condition = SearchCondition.find((item) => item.id === customer.searchConditionId);
+    const summary = condition?.items.slice(0, 3).map((item) => item.value).join("・") || "条件確認中";
+    const action = TodayAction.find((item) => item.customerId === customer.id);
+    const tone = customer.unassigned ? "neutral" : customer.priority === "urgent" ? "warning" : "info";
+    const label = customer.unassigned ? "未割当" : customer.priority === "urgent" ? "要対応" : "追客中";
+    return `
+      <article class="card customer-card${state.selectedCustomerId === customer.id ? " is-selected" : ""}">
+        <button class="customer-head" type="button" data-action="open-customer" data-id="${customer.id}">
+          <span class="person-avatar" aria-hidden="true">${escapeHTML(customer.name.slice(0, 1))}</span>
+          <span class="customer-info">
+            <span class="customer-name-row">
+              <span class="customer-name">${escapeHTML(customer.name)}</span>
+              <span class="status-pill ${tone}">${label}</span>
+            </span>
+            <span class="customer-meta">
+              <span class="meta-item"><span class="meta-icon" aria-hidden="true">▦</span>${escapeHTML(summary)}</span>
+              <span class="meta-item"><span class="meta-icon" aria-hidden="true">◷</span>${escapeHTML(relativeCustomerTime(customer.lastContactAt))}</span>
+              <span class="meta-item"><span class="meta-icon" aria-hidden="true">◍</span>${escapeHTML(customer.source)}</span>
+              <span class="meta-item"><span class="meta-icon" aria-hidden="true">◔</span>${escapeHTML(customer.unassigned ? "未割当" : customer.assignedTo)}</span>
+            </span>
+          </span>
+          ${statusArt(CUSTOMER_STATUS_ART[customer.status] || "todo", "customer-mascot")}
+        </button>
+        ${action ? `<button class="customer-action" type="button" data-action="open-talk" data-id="${customer.id}">
+          <span class="meta-icon" aria-hidden="true">✉</span>
+          <span class="customer-action-label">${escapeHTML(action.title)}（${escapeHTML(priorityDueLabel(action))}）</span>
+          <span class="chevron" aria-hidden="true">›</span>
+        </button>` : ""}
+      </article>`;
+  }
+
+  function matchesCustomerOwner(customer) {
+    if (runtime.customerOwner === "all") return true;
+    if (runtime.customerOwner === "unassigned") return customer.unassigned;
+    return !customer.unassigned && customer.assignedTo === runtime.customerOwner;
+  }
+
+  function matchesCustomerFilter(customer, filter) {
+    if (filter === "all") return true;
+    if (filter === "urgent") return customer.priority === "urgent";
+    if (filter === "unassigned") return customer.unassigned;
+    if (filter === "followup") return customer.stage === "追客中";
+    return true;
+  }
+
+  /** チップに件数を出す。押す前に「そこに何件あるか」が見える。 */
+  function customerFilterCount(filter) {
+    return Customer.filter((customer) => matchesCustomerFilter(customer, filter) && matchesCustomerOwner(customer)).length;
+  }
+
+  function openCustomerFilters() {
+    const owners = [["all", "すべての担当"], ["佐藤", "佐藤"], ["田中", "田中"], ["高橋", "高橋"], ["unassigned", "未割当"]];
+    const content = `
+      <header class="sheet-header"><div><p class="eyebrow">FILTER</p><h2 id="customer-filter-title" class="sheet-title">絞り込み</h2><p class="sheet-subtitle">担当者で一覧を絞ります</p></div><button class="icon-button" type="button" data-action="close-modal" aria-label="閉じる">×</button></header>
+      <div class="sheet-content">
+        <div class="checkbox-list">
+          ${owners.map(([id, label]) => `<button class="filter-toggle ${runtime.customerOwner === id ? "on" : ""}" type="button" data-action="customer-owner" data-owner="${id}" aria-pressed="${runtime.customerOwner === id}">
+            <span class="filter-check" aria-hidden="true">${runtime.customerOwner === id ? "✓" : ""}</span>
+            <span class="filter-main"><span class="filter-label">${escapeHTML(label)}</span><span class="filter-copy">${Customer.filter((customer) => id === "all" || (id === "unassigned" ? customer.unassigned : !customer.unassigned && customer.assignedTo === id)).length}名</span></span>
+          </button>`).join("")}
+        </div>
+      </div>
+      <footer class="sheet-footer">
+        <button class="ghost-button" type="button" data-action="customer-owner" data-owner="all">すべて外す</button>
+        <button class="primary-button" type="button" data-action="close-modal">この条件で見る</button>
+      </footer>`;
+    openSheet(content, "customer-filter-title");
+  }
+
   function getFilteredCustomers() {
     const query = runtime.customerSearch.trim().toLocaleLowerCase("ja");
     return Customer.filter((customer) => {
       const matchesSearch = !query || [customer.name, customer.kana, customer.source, customer.status, customer.stage, customer.lineSummary]
         .some((value) => value.toLocaleLowerCase("ja").includes(query));
-      const matchesFilter =
-        runtime.customerFilter === "all" ||
-        (runtime.customerFilter === "urgent" && customer.priority === "urgent") ||
-        (runtime.customerFilter === "unassigned" && customer.unassigned) ||
-        (runtime.customerFilter === "followup" && customer.stage === "追客中");
-      return matchesSearch && matchesFilter;
+      return matchesSearch && matchesCustomerFilter(customer, runtime.customerFilter) && matchesCustomerOwner(customer);
     });
   }
 
@@ -1070,18 +1427,8 @@ import {
     if (!filtered.length) {
       return `<div class="empty-state" style="min-height:220px"><div class="empty-state-inner"><div class="empty-icon" aria-hidden="true">⌕</div><h3 class="empty-title">該当する顧客はいません</h3><p class="empty-copy">検索語やフィルターを変えてください。</p></div></div>`;
     }
-    return `<ul class="customer-list">${filtered.map((customer) => {
-      const condition = SearchCondition.find((item) => item.id === customer.searchConditionId);
-      const summary = condition?.items.slice(0, 3).map((item) => item.value).join(" · ") || "条件確認中";
-      const action = TodayAction.find((item) => item.customerId === customer.id);
-      return `<li>
-        <button class="customer-item ${state.selectedCustomerId === customer.id ? "selected" : ""}" type="button" data-action="open-customer" data-id="${customer.id}">
-          <span class="person-avatar" aria-hidden="true">${escapeHTML(customer.name.slice(0, 1))}</span>
-          <span class="person-main"><span class="person-name">${escapeHTML(customer.name)}${customer.unassigned ? '<span class="unread-dot" aria-label="未読あり"></span>' : ""}</span><span class="person-meta">${escapeHTML(customer.status)} · ${escapeHTML(relativeCustomerTime(customer.lastContactAt))}</span><span class="customer-condition">${escapeHTML(summary)}</span>${action ? `<span class="customer-next">次：${escapeHTML(action.title)} · ${escapeHTML(priorityDueLabel(action))}</span>` : ""}</span>
-          <span class="customer-trailing"><span class="status-pill ${customer.priority}">${customer.unassigned ? "未割当" : escapeHTML(customer.assignedTo)}</span><span class="chevron" aria-hidden="true">›</span></span>
-        </button>
-      </li>`;
-    }).join("")}</ul>`;
+    return `<div class="customer-list">${filtered.map(renderCustomerCard).join("")}</div>
+      <p class="list-footnote">全 ${Customer.length}件中 1〜${filtered.length}件を表示</p>`;
   }
 
   function refreshCustomerResults() {
@@ -1094,8 +1441,8 @@ import {
     if (!selected) {
       return `
         <section class="view" aria-labelledby="properties-title">
-          <header class="view-header"><div><p class="eyebrow">MATCHING</p><h1 id="properties-title" class="page-title">物件</h1></div></header>
-          <div class="empty-state"><div class="empty-state-inner"><div class="empty-icon" aria-hidden="true">♙</div><h2 class="empty-title">先に顧客を選んでください</h2><p class="empty-copy">希望条件と照合して、一人ひとりに合う物件だけを表示します。</p><button class="secondary-button" type="button" data-action="go-customers">顧客を選ぶ</button></div></div>
+          <header class="hero"><div class="hero-copy"><p class="eyebrow">PROPERTY MATCH</p><h1 id="properties-title" class="hero-title">物件</h1></div>${mascot("hero", "hero-mascot")}</header>
+          <div class="empty-state"><div class="empty-state-inner"><div class="empty-icon" aria-hidden="true">♙</div><h2 class="empty-title">先に顧客を選んでください</h2><p class="empty-copy">希望条件と照合して、一人ひとりに合う物件だけを表示します。</p><button class="primary-button" type="button" data-action="go-customers">顧客を選ぶ</button></div></div>
         </section>`;
     }
 
@@ -1103,40 +1450,45 @@ import {
     const statuses = new Map(
       orderedProperties.map((property) => [property.id, effectiveStatusForProperty(selected.id, property.id)]),
     );
-    const remaining = adapterState.empty
+    const unreviewed = adapterState.empty
       ? []
       : orderedProperties.filter((property) => statuses.get(property.id) === "unreviewed");
-    const likedCount = [...statuses.values()].filter((status) => status === "liked").length;
+    const remaining = unreviewed.filter(passesDeckFilters);
+    const hiddenByFilter = unreviewed.length - remaining.length;
+    const likedCount = orderedProperties.filter((property) => statuses.get(property.id) === "liked").length;
     const skippedCount = [...statuses.values()].filter((status) => status === "skipped").length;
-    // 横スワイプは判断せず前後へ送るだけなので、いま見ている位置を保持する。
     const cursor = clampDeckCursor(remaining.length);
     const current = remaining[cursor];
-    const previous = remaining[cursor - 1];
     const next = remaining[cursor + 1];
     return `
       <section class="view deck-screen" aria-labelledby="properties-title">
-        <div class="selected-customer-bar" aria-label="選択中の顧客">
-          <div class="selection-copy"><span class="selection-dot" aria-hidden="true"></span><div><span class="selection-label">この顧客に提案</span><strong class="selection-name">${escapeHTML(selected.name)}</strong></div></div>
+        <div class="card proposal-bar">
+          <div class="proposal-copy">
+            <p class="proposal-label"><span class="proposal-dot" aria-hidden="true"></span>この顧客に提案</p>
+            <p class="proposal-name">${escapeHTML(selected.name)}</p>
+          </div>
           <button class="ghost-button compact-button" type="button" data-action="go-customers">変更</button>
+          ${mascot("search", "proposal-mascot")}
         </div>
-        <header class="deck-header">
-          <h1 id="properties-title" class="deck-title">候補カード <span class="deck-count">${remaining.length}</span></h1>
-          <button class="ghost-button compact-button" type="button" data-action="edit-preference" data-preference="propertyFields">表示項目</button>
-        </header>
+
+        <div class="deck-heading">
+          <h1 id="properties-title" class="deck-title">候補カード</h1>
+          <span class="deck-count">${remaining.length}件</span>
+          <button class="deck-icon-button" type="button" data-action="edit-preference" data-preference="propertyFields" aria-label="カードの表示項目を編集"><span aria-hidden="true">|||</span></button>
+        </div>
+
+        <div class="deck-chips" role="group" aria-label="並び替えと絞り込み">
+          <button class="deck-chip round ${activeDeckFilterCount() ? "on" : ""}" type="button" data-action="open-deck-filters" aria-label="絞り込み${activeDeckFilterCount() ? `（${activeDeckFilterCount()}件適用中）` : ""}"><span aria-hidden="true">⌕</span>${activeDeckFilterCount() ? '<span class="chip-dot" aria-hidden="true"></span>' : ""}</button>
+          ${DECK_SORTS.map((sort) => `<button class="deck-chip ${runtime.deckSort === sort.id ? "on" : ""}" type="button" data-action="deck-sort" data-sort="${sort.id}" aria-pressed="${runtime.deckSort === sort.id}">${escapeHTML(sort.label)}${runtime.deckSort === sort.id ? '<span class="chip-caret" aria-hidden="true">⌄</span>' : ""}</button>`).join("")}
+        </div>
+
         ${renderFreshnessWarning("空室・鍵・金額は提案前に再確認してください")}
+
         ${current ? `
-          <div class="deck-stage" data-deck-stage aria-live="polite">
-            ${previous ? renderPropertyCard(previous, "prev", selected.id) : ""}
-            ${next ? renderPropertyCard(next, "next", selected.id) : ""}
-            ${renderPropertyCard(current, "current", selected.id)}
-          </div>
-          <div class="deck-tray" data-deck-tray>
-            <button class="tray-side" type="button" data-action="property-skip" data-id="${current.id}" aria-label="この物件をSkipする">Skip</button>
-            <button class="tray-deck" type="button" data-action="review-candidates" data-id="${selected.id}"><span aria-hidden="true">↑</span> 保存済み · ${likedCount}</button>
-            <button class="tray-side save" type="button" data-action="property-like" data-id="${current.id}" ${current.listingStatus === "募集終了" ? "disabled" : ""} aria-label="${current.listingStatus === "募集終了" ? "募集終了のため保存できません" : "この物件を候補へ保存する"}">${current.listingStatus === "募集終了" ? "終了" : "保存"}</button>
-          </div>
-          <p class="deck-hint">カードを下へスワイプで保存 · 左右で前後の候補 · タップで詳細</p>
-          <p class="deck-position">${cursor + 1} / ${remaining.length}件目　Skip ${skippedCount}件</p>` : adapterState.empty ? renderPropertyNoResults(selected) : renderPropertyEmpty(selected, { liked: likedCount, skipped: skippedCount })}
+          <div class="deck-list" data-deck-stage aria-live="polite">
+            ${renderPropertyCard(current, "current", selected.id, { cursor, total: remaining.length, likedCount, skippedCount })}
+            ${next ? renderPropertyCard(next, "next", selected.id, {}) : ""}
+          </div>` : adapterState.empty ? renderPropertyNoResults(selected) : hiddenByFilter ? renderDeckFilteredOut(hiddenByFilter) : renderPropertyEmpty(selected, { liked: likedCount, skipped: skippedCount })}
       </section>`;
   }
 
@@ -1153,7 +1505,7 @@ import {
     const selected = customerById(state.selectedCustomerId);
     if (!selected || runtime.decisionPending) return;
     const remaining = matchingPropertiesForCustomer(selected.id).filter(
-      (property) => effectiveStatusForProperty(selected.id, property.id) === "unreviewed",
+      (property) => effectiveStatusForProperty(selected.id, property.id) === "unreviewed" && passesDeckFilters(property),
     );
     const nextCursor = runtime.deckCursor + step;
     if (nextCursor < 0 || nextCursor > remaining.length - 1) return;
@@ -1163,12 +1515,14 @@ import {
   }
 
   function renderPropertyField(field, property, index) {
+    const [walk, layout] = propertyPlaceParts(property);
     const values = {
       listing: ["募集状況", property.listingStatus],
-      ad: ["AD・社内限定", property.internal.ad],
+      ad: ["AD・社内限定", adBreakdown(property).label],
       rent: ["賃料", yen(property.rentYen)],
       management: ["管理費／共益費", yen(property.managementFeeYen)],
-      address: ["場所", property.address],
+      address: ["場所", walk],
+      layout: ["間取り", layout],
       viewing: ["内見可否", property.viewingAvailable],
       moveIn: ["入居可能日", property.moveInAt],
       initialCost: ["初期費用概算", yen(property.initialCostYen)],
@@ -1176,38 +1530,126 @@ import {
     };
     const value = values[field];
     if (!value) return "";
-    const wide = field === "address" || field === "note";
-    const statusClass = field === "listing" && property.listingStatus === "募集終了" ? " danger-text" : "";
-    return `<div class="property-data${wide ? " wide" : ""}${index === 0 ? " emphasized" : ""}"><span class="detail-label">${value[0]}${index === 0 ? " · 強調" : ""}</span><strong class="detail-value${statusClass}">${escapeHTML(value[1])}</strong></div>`;
+    const wide = field === "note" || field === "initialCost";
+    const half = field === "address" || field === "layout";
+    const toneClass = field === "listing" ? ` tone-${listingTone(property.listingStatus)}` : "";
+    return `<div class="property-data${wide ? " wide" : ""}${half ? " half" : ""}${index === 0 ? " emphasized" : ""}${toneClass}"><span class="detail-label">${value[0]}${index === 0 ? " · 強調" : ""}</span><strong class="detail-value">${escapeHTML(value[1])}</strong></div>`;
   }
 
   /**
-   * カード表面は要点だけに絞る（物件名・賃料・間取り・募集状況・駅徒歩・一致率・鮮度）。
+   * カード表面は要点だけに絞る（物件名・賃料・間取り・募集状況・駅徒歩・マッチ度・鮮度）。
    * 賃料以外の金額、AD、備考、合う理由は詳細シートへ送り、面を写真で使い切る。
    */
-  function renderPropertyCard(property, slot, customerId) {
+  function renderPropertyCard(property, slot, customerId, stats = {}) {
     const isCurrent = slot === "current";
     const candidate = candidateByIds(customerId, property.id);
     const stale = propertyIsStale(property);
-    const [walk, layout] = String(property.address).split("・");
-    const statusTone = property.listingStatus === "募集終了" ? "urgent" : property.listingStatus === "申込あり" ? "warning" : "success";
+    const sold = property.listingStatus === "募集終了";
+    const [walk, layout] = propertyPlaceParts(property);
+    const visual = propertyVisual(property);
     return `
-      <article class="property-card deck-card ${slot} ${isCurrent ? "top-card" : ""}" data-property-card data-property-slot="${slot}" data-property-id="${property.id}" data-listing-status="${property.listingStatus}" ${isCurrent ? 'aria-label="現在の候補物件"' : 'aria-hidden="true"'}>
-        <img class="card-photo" src="${escapeHTML(property.imageUrl)}" alt="${escapeHTML(property.name)}の室内写真" loading="${isCurrent ? "eager" : "lazy"}" referrerpolicy="no-referrer" draggable="false" />
-        <span class="card-scrim" aria-hidden="true"></span>
-        <span class="swipe-badge save" aria-hidden="true">保存</span>
-        <div class="card-top">
-          <span class="match-badge">一致率 ${clampPercent(candidate?.matchScore)}%</span>
-          <span class="freshness-chip ${stale ? "stale" : ""}">${stale ? "⚠ " : ""}更新 ${escapeHTML(relativeSourceTime(property.sourceUpdatedAt))}</span>
+      <article class="card property-card ${slot} ${isCurrent ? "top-card" : ""}" data-property-card data-property-slot="${slot}" data-property-id="${property.id}" data-listing-status="${property.listingStatus}" ${isCurrent ? 'aria-label="現在の候補物件"' : 'aria-hidden="true"'}>
+        <div class="card-photo-wrap">
+          <img class="card-photo ${visual.kind}" src="${escapeHTML(visual.url)}" alt="${escapeHTML(property.name)}の${visual.label}" loading="${isCurrent ? "eager" : "lazy"}" referrerpolicy="no-referrer" draggable="false" />
+          <span class="match-badge">マッチ度 <strong>${clampPercent(candidate?.matchScore)}</strong><span class="match-badge-unit">%</span></span>
+          <span class="freshness-chip ${stale ? "stale" : ""}"><span aria-hidden="true">◷</span>${stale ? " ⚠" : ""}更新 ${escapeHTML(relativeSourceTime(property.sourceUpdatedAt))}</span>
+          ${isCurrent && candidate?.matchScore >= 90 ? `<span class="card-bubble">${statusArt("done", "bubble-art")}<span class="bubble-text">すごくマッチしてるよ！<br />ご希望の条件にぴったりの物件だよ</span></span>` : ""}
         </div>
-        <div class="card-foot">
-          <span class="status-pill ${statusTone}">${escapeHTML(property.listingStatus)}</span>
-          <h2 class="card-name">${escapeHTML(property.name)}</h2>
-          <p class="card-price">${escapeHTML(manYen(property.rentYen))}<span class="card-layout"> / ${escapeHTML(layout || "間取り 未確認")}</span></p>
-          <p class="card-walk">${escapeHTML(walk || "所在 未確認")}　内見 ${escapeHTML(property.viewingAvailable)}</p>
+        <div class="card-body">
+          <span class="listing-chip ${listingTone(property.listingStatus)}">${escapeHTML(property.listingStatus)}</span>
+          <div class="card-title-row">
+            <button class="card-name-button" type="button" data-action="open-property-detail" data-id="${property.id}">${escapeHTML(property.name)}</button>
+            <span class="card-chevron" aria-hidden="true">›</span>
+          </div>
+          <p class="card-price"><strong>${escapeHTML(manYen(property.rentYen))}</strong><span class="card-layout"> / ${escapeHTML(layout)}</span></p>
+          <p class="card-walk"><span class="meta-icon" aria-hidden="true">▤</span>${escapeHTML(walk)}　<span class="card-viewing">内見 ${escapeHTML(property.viewingAvailable)}</span></p>
+          ${isCurrent ? `
+            <div class="decide-row">
+              <div class="decide-item">
+                <button class="decide-button skip" type="button" data-action="property-skip" data-id="${property.id}" aria-label="この物件をスキップする"><span aria-hidden="true">✕</span></button>
+                <span class="decide-label">スキップ</span>
+              </div>
+              <p class="decide-hint"><span aria-hidden="true">←</span> 左右にスワイプで<br />次の物件へ <span aria-hidden="true">→</span></p>
+              <div class="decide-item">
+                <button class="decide-button save" type="button" data-action="property-like" data-id="${property.id}" ${sold ? "disabled" : ""} aria-label="${sold ? "募集終了のため保存できません" : "この物件を候補へ保存する"}">${sold ? '<span aria-hidden="true">—</span>' : SAVE_ICON}</button>
+                <span class="decide-label">${sold ? "募集終了" : "保存する"}</span>
+              </div>
+            </div>
+            <p class="deck-position"><strong>${stats.cursor + 1}</strong> / ${stats.total}件目　<span class="accent-text">保存 ${stats.likedCount}</span> · Skip ${stats.skippedCount}</p>` : ""}
         </div>
-        ${isCurrent ? `<button class="card-open" type="button" data-action="open-property-detail" data-id="${property.id}" aria-label="${escapeHTML(property.name)}の詳細を開く"><span class="card-open-label">タップで詳細</span></button>` : ""}
       </article>`;
+  }
+
+  function talkMessages(customerId) {
+    if (!runtime.talks.has(customerId)) runtime.talks.set(customerId, []);
+    return runtime.talks.get(customerId);
+  }
+
+  function replyDraftFor(customer) {
+    return `${customer.name.split(" ")[0]}さま、お問い合わせありがとうございます。ご希望のエリアと入居時期に合うお部屋を整理してお送りします。通勤先の最寄り駅と、ご希望の賃料上限を教えていただけますか？`;
+  }
+
+  /**
+   * 公式LINEのトーク。ここは画面の見え方を確定させるためのモックで、
+   * 送信は端末内の記録に留め、外部のMessaging APIは呼ばない。
+   */
+  function openTalk(customerId) {
+    const customer = customerById(customerId);
+    if (!customer) return;
+    runtime.talkCustomerId = customerId;
+    const messages = talkMessages(customerId);
+    const content = `
+      <header class="sheet-header">
+        <div><p class="eyebrow">LINE TALK</p><h2 id="talk-title" class="sheet-title">${escapeHTML(customer.name)}</h2><p class="sheet-subtitle">公式LINEのトーク · ${escapeHTML(customer.status)}</p></div>
+        <button class="icon-button" type="button" data-action="close-modal" aria-label="閉じる">×</button>
+      </header>
+      <div class="sheet-content talk-content">
+        <div class="reply-safety">モックです。外部のLINEへは送信せず、この端末の記録にだけ残します。<a class="talk-live-link" href="/line">本物の公式LINEで試す →</a></div>
+        <ol class="talk-log">
+          ${messages.map((message) => `
+            <li class="talk-row ${message.direction}">
+              <div class="talk-bubble">${escapeHTML(message.body)}</div>
+              <p class="talk-meta">${escapeHTML(message.at)}${message.direction === "out" ? ` · ${message.status === "sent" ? "送信済み（モック）" : "下書き"}` : " · 受信"}</p>
+            </li>`).join("")}
+        </ol>
+        ${messages.length ? "" : '<p class="small-copy">まだやり取りがありません。</p>'}
+      </div>
+      <form id="talk-form" class="talk-form" data-id="${customer.id}">
+        <div class="talk-tools">
+          <button class="ghost-button compact-button" type="button" data-action="talk-insert-draft" data-id="${customer.id}">AI下書きを入れる</button>
+          <button class="ghost-button compact-button" type="button" data-action="talk-mock-receive" data-id="${customer.id}">受信をテスト</button>
+        </div>
+        <label class="sr-only" for="talk-body">返信本文</label>
+        <textarea id="talk-body" name="body" class="talk-input" rows="3" placeholder="返信を入力（送信前に必ず内容を確認してください）">${escapeHTML(runtime.talkDraft)}</textarea>
+        <div class="talk-send">
+          <p class="tiny-copy">鍵・AD・管理会社メモなどの社内限定情報は送信できません</p>
+          <button class="primary-button" type="submit">確認して送信</button>
+        </div>
+      </form>`;
+    openSheet(content, "talk-title");
+    window.requestAnimationFrame(() => {
+      const log = modalRoot.querySelector(".talk-content");
+      if (log) log.scrollTop = log.scrollHeight;
+    });
+  }
+
+  function openDeckFilters() {
+    const content = `
+      <header class="sheet-header"><div><p class="eyebrow">FILTER</p><h2 id="deck-filter-title" class="sheet-title">絞り込み</h2><p class="sheet-subtitle">仕分けに出す物件を絞ります。判断済みの結果は変わりません</p></div><button class="icon-button" type="button" data-action="close-modal" aria-label="閉じる">×</button></header>
+      <div class="sheet-content">
+        <div class="checkbox-list">
+          ${DECK_FILTERS.map((filter) => `
+            <button class="filter-toggle ${runtime.deckFilters[filter.id] ? "on" : ""}" type="button" data-action="toggle-deck-filter" data-filter="${filter.id}" aria-pressed="${runtime.deckFilters[filter.id]}">
+              <span class="filter-check" aria-hidden="true">${runtime.deckFilters[filter.id] ? "✓" : ""}</span>
+              <span class="filter-main"><span class="filter-label">${escapeHTML(filter.label)}</span><span class="filter-copy">${escapeHTML(filter.copy)}</span></span>
+            </button>`).join("")}
+        </div>
+      </div>
+      <footer class="sheet-footer">
+        <button class="ghost-button" type="button" data-action="clear-deck-filters">すべて外す</button>
+        <button class="primary-button" type="button" data-action="close-modal">この条件で見る</button>
+      </footer>`;
+    openSheet(content, "deck-filter-title");
   }
 
   function openPropertyDetail(propertyId) {
@@ -1224,7 +1666,15 @@ import {
         <div class="property-data-grid">
           ${PROPERTY_FIELD_KEYS.map((field, fieldIndex) => renderPropertyField(field, property, fieldIndex + 1)).join("")}
         </div>
-        <div class="match-reason">合う理由：${(candidate?.matchReasons || []).map(escapeHTML).join("・") || "未算出"}</div>
+        <section class="match-block" aria-label="マッチ度">
+          <div class="match-head">
+            <span class="match-score">${clampPercent(candidate?.matchScore)}<span class="match-unit">%</span></span>
+            <div><p class="match-title">マッチ度</p><p class="match-sub">${escapeHTML(customer.name)}さんの希望条件との一致</p></div>
+          </div>
+          ${(candidate?.matchReasons || []).length
+            ? `<ul class="match-list">${candidate.matchReasons.map((reason) => `<li>${escapeHTML(MATCH_REASON_COPY[reason] || `${reason}が希望に合っています`)}</li>`).join("")}</ul>`
+            : '<p class="small-copy">一致した条件はまだ算出できていません。</p>'}
+        </section>
         <section class="detail-section" aria-labelledby="internal-title">
           <div class="detail-section-head"><h3 id="internal-title" class="detail-section-title">社内限定</h3><span class="mini-badge">顧客返信には含めません</span></div>
           <p class="small-copy">鍵：${escapeHTML(property.internal.keyInfo)}</p>
@@ -1246,31 +1696,122 @@ import {
     return `<div class="empty-state"><div class="empty-state-inner"><div class="empty-icon" aria-hidden="true">⌕</div><h2 class="empty-title">条件に合う物件が0件です</h2><p class="empty-copy">${escapeHTML(selected.name)}さんの絶対条件を保ったまま、駅徒歩または築年数を少し広げる案を確認してください。</p><button class="primary-button" type="button" data-action="retry-property-search">条件緩和案を確認</button><p class="small-copy" style="margin-top:12px">絶対条件は自動で緩めません</p></div></div>`;
   }
 
+  /** モックの内見日（"8月11日"）から日付だけ取り出す。本番はISO 8601へ寄せる。 */
+  function viewingDayNumber(viewing) {
+    const matched = String(viewing.date).match(/(\d+)日/);
+    return matched ? Number(matched[1]) : null;
+  }
+
+  function renderViewingCalendar() {
+    const base = new Date(2026, 7 + runtime.calendarOffset, 1);
+    const year = base.getFullYear();
+    const month = base.getMonth() + 1;
+    const isMockMonth = runtime.calendarOffset === 0;
+    const first = new Date(year, month - 1, 1);
+    const daysInMonth = new Date(year, month, 0).getDate();
+    const lead = first.getDay();
+    const marked = isMockMonth ? new Set(Viewing.map(viewingDayNumber).filter(Boolean)) : new Set();
+    const today = isMockMonth ? 11 : 0;
+    const cells = [];
+    for (let index = 0; index < lead; index += 1) cells.push('<span class="cal-cell is-outside" aria-hidden="true"></span>');
+    for (let day = 1; day <= daysInMonth; day += 1) {
+      const weekday = (lead + day - 1) % 7;
+      const tone = weekday === 0 ? " is-sun" : weekday === 6 ? " is-sat" : "";
+      const isToday = day === today;
+      cells.push(`<span class="cal-cell${tone}${isToday ? " is-today" : ""}"><span class="cal-day">${day}</span>${marked.has(day) ? '<span class="cal-dot" aria-hidden="true"></span>' : ""}</span>`);
+    }
+    return `
+      <div class="card calendar-card">
+        <div class="calendar-head">
+          <button class="calendar-nav" type="button" data-action="calendar-step" data-step="-1" aria-label="前の月">‹</button>
+          <p class="calendar-title">${year}年${month}月</p>
+          <button class="calendar-nav" type="button" data-action="calendar-step" data-step="1" aria-label="次の月">›</button>
+        </div>
+        <div class="calendar-grid" role="presentation">
+          ${["日", "月", "火", "水", "木", "金", "土"].map((label, index) => `<span class="cal-head${index === 0 ? " is-sun" : index === 6 ? " is-sat" : ""}">${label}</span>`).join("")}
+          ${cells.join("")}
+        </div>
+      </div>`;
+  }
+
   function renderViewings() {
-    const filtered = Viewing.filter((viewing) => viewing.range === runtime.viewingRange);
+    const ranges = { today: "今日", week: "今週", month: "今月" };
+    const filtered = runtime.viewingRange === "month" ? Viewing : Viewing.filter((viewing) => viewing.range === runtime.viewingRange || (runtime.viewingRange === "week" && viewing.range === "today"));
     const todayViewings = Viewing.filter((viewing) => viewing.range === "today").sort((a, b) => a.routeOrder - b.routeOrder);
+    const routeSteps = ["徒歩 8分", "電車 10分"];
     return `
       <section class="view" aria-labelledby="viewings-title">
-        <header class="view-header"><div><p class="eyebrow">VIEWING DESK</p><h1 id="viewings-title" class="page-title">内見</h1></div><span class="date-chip">${filtered.length}組</span></header>
+        <header class="hero">
+          <div class="hero-copy">
+            <p class="eyebrow"><span class="eyebrow-icon" aria-hidden="true">✦</span>VIEWING DESK</p>
+            <h1 id="viewings-title" class="hero-title">内見</h1>
+            <p class="hero-lead">内見の準備からフォローまで、<br />スマートにサポートします。</p>
+          </div>
+          ${mascot("hero", "hero-mascot")}
+        </header>
         ${renderFreshnessWarning("空室と鍵は、出発前に管理会社へ再確認してください")}
+        ${renderStatusLegend("内見ステータス", ["moving", "key", "viewing", "waiting", "done"], {
+          viewing: { label: "案内中", copy: "内見案内中" },
+          waiting: { label: "申込検討", copy: "申込を検討中" },
+          done: { label: "完了", copy: "内見完了" },
+        })}
+
         <div class="segmented-control" aria-label="内見期間">
-          <button class="segmented-button" type="button" data-action="viewing-range" data-range="today" aria-pressed="${runtime.viewingRange === "today"}">今日</button>
-          <button class="segmented-button" type="button" data-action="viewing-range" data-range="week" aria-pressed="${runtime.viewingRange === "week"}">今週</button>
+          ${Object.entries(ranges).map(([id, label]) => `<button class="segmented-button" type="button" data-action="viewing-range" data-range="${id}" aria-pressed="${runtime.viewingRange === id}">${label}</button>`).join("")}
         </div>
-        ${runtime.viewingRange === "today" ? `
-          <section class="section" aria-labelledby="route-heading">
-            <div class="section-heading"><h2 id="route-heading" class="section-title">推奨巡回順</h2><span class="mini-badge">移動 約25分</span></div>
-            <div class="card route-card"><div class="route-head"><p class="small-copy">移動時間と鍵の受取を加味</p><span class="status-pill success">最短</span></div><ol class="route-list">
-              ${todayViewings.map((viewing) => {
-                const property = propertyById(viewing.propertyId);
-                return `<li class="route-item"><span class="route-number">${viewing.routeOrder}</span><div><p class="route-title">${escapeHTML(property.name)}</p><p class="route-meta">${escapeHTML(viewing.time)} · ${escapeHTML(viewing.meetingPlace)}</p></div></li>`;
-              }).join("")}
-            </ol></div>
-          </section>` : ""}
+
+        ${renderViewingCalendar()}
+
+        <div class="metric-grid" aria-label="内見の件数">
+          <div class="metric-card">
+            ${mascot("checklist", "metric-mascot")}
+            <div class="metric-body">
+              <p class="metric-label">本日</p>
+              <p class="metric-value">${Viewing.filter((viewing) => viewing.range === "today").length}<span class="metric-unit">組</span></p>
+              <p class="metric-note">内見予定</p>
+            </div>
+          </div>
+          <div class="metric-card">
+            ${mascot("house", "metric-mascot")}
+            <div class="metric-body">
+              <p class="metric-label">今週</p>
+              <p class="metric-value">${Viewing.length}<span class="metric-unit">組</span></p>
+              <p class="metric-note">内見予定</p>
+            </div>
+          </div>
+        </div>
+
         <section class="section" aria-labelledby="viewing-list-heading">
-          <div class="section-heading"><h2 id="viewing-list-heading" class="section-title">${runtime.viewingRange === "today" ? "今日" : "今週"}の予定</h2></div>
-          ${filtered.map(renderViewingCard).join("") || `<div class="empty-state" style="min-height:260px"><div class="empty-state-inner"><div class="empty-icon">⌖</div><h3 class="empty-title">内見予定はありません</h3></div></div>`}
+          <div class="section-heading">
+            <h2 id="viewing-list-heading" class="section-title">${ranges[runtime.viewingRange]}の予定</h2>
+            <span class="section-note">${filtered.length}組</span>
+          </div>
+          ${filtered.map(renderViewingCard).join("") || `<div class="empty-state" style="min-height:200px"><div class="empty-state-inner"><div class="empty-icon">⌖</div><h3 class="empty-title">内見予定はありません</h3></div></div>`}
         </section>
+
+        ${runtime.viewingRange === "today" && todayViewings.length ? `
+          <section class="section" aria-labelledby="route-heading">
+            <div class="section-heading">
+              <h2 id="route-heading" class="section-title"><span class="eyebrow-icon" aria-hidden="true">✦</span>推奨巡回順</h2>
+              <span class="section-note">合計移動時間 <strong class="route-total">約25分</strong></span>
+            </div>
+            <div class="card route-card">
+              <ol class="route-list">
+                ${todayViewings.map((viewing, index) => {
+                  const property = propertyById(viewing.propertyId);
+                  return `<li class="route-item${index < todayViewings.length - 1 ? " has-next" : ""}">
+                    <span class="route-number">${viewing.routeOrder}</span>
+                    <div class="route-main">
+                      <p class="route-time">${escapeHTML(viewing.time)}</p>
+                      <p class="route-title">${escapeHTML(property.name)}</p>
+                      <p class="route-meta">${escapeHTML(viewing.meetingPlace)}</p>
+                      ${index < todayViewings.length - 1 ? `<p class="route-move"><span class="meta-icon" aria-hidden="true">↳</span>${routeSteps.join(" → ")}</p>` : ""}
+                    </div>
+                  </li>`;
+                }).join("")}
+              </ol>
+            </div>
+          </section>` : ""}
       </section>`;
   }
 
@@ -1299,24 +1840,70 @@ import {
 
   function renderCases() {
     const stages = [
-      ["追客中", "#80a995"],
-      ["内見調整", "#f3a36f"],
-      ["申込準備", "#d99655"],
-      ["審査中", "#8e93c8"],
-      ["契約準備", "#6da9ba"],
-      ["契約済", "#6a9f83"],
+      ["追客中", "積極的にアプローチ中"],
+      ["内見調整", "内見日程を調整中"],
+      ["申込準備", "申込に向けて準備中"],
+      ["審査中", "審査結果を待っている"],
+      ["契約準備", "契約手続きを進めている"],
+      ["契約済", "契約手続き完了"],
     ];
+    const dueSoon = Case.filter((item) => {
+      const due = Date.parse(item.dueAt);
+      return Number.isFinite(due) && due >= MOCK_NOW && due <= MOCK_NOW + 24 * 60 * 60 * 1_000;
+    }).length;
     return `
       <section class="view" aria-labelledby="cases-title">
-        <header class="view-header"><div><p class="eyebrow">DEAL PIPELINE</p><h1 id="cases-title" class="page-title">案件</h1></div><span class="date-chip">全 ${Case.length}件</span></header>
-        <div class="summary-grid" aria-label="案件概要"><div class="metric-card"><span class="metric-label">期限24時間以内</span><strong class="metric-value">${Case.filter((item) => { const due = Date.parse(item.dueAt); return Number.isFinite(due) && due >= MOCK_NOW && due <= MOCK_NOW + 24 * 60 * 60 * 1_000; }).length}<span class="metric-unit">件</span></strong></div><div class="metric-card"><span class="metric-label">申込以降</span><strong class="metric-value">${Case.filter((item) => stageAtOrBeyond(item.stage, "申込準備")).length}<span class="metric-unit">件</span></strong></div></div>
+        <header class="hero">
+          <div class="hero-copy">
+            <p class="eyebrow">DEAL PIPELINE</p>
+            <h1 id="cases-title" class="hero-title">案件</h1>
+            <p class="hero-lead">進捗を管理して、成約までリードしよう。</p>
+          </div>
+          ${mascot("hero", "hero-mascot")}
+        </header>
+
+        ${renderStatusLegend("ステージの見方", ["proposing", "viewing", "applying", "waiting", "done", "recheck"], {
+          proposing: { label: "追客中", copy: "積極的にアプローチ中" },
+          viewing: { label: "内見調整", copy: "内見日程を調整中" },
+          applying: { label: "申込準備", copy: "申込に向けて準備中" },
+          waiting: { label: "申込以降", copy: "申込後の手続き中" },
+          done: { label: "契約完了", copy: "契約手続き完了" },
+          recheck: { label: "要再確認", copy: "確認・対応が必要です" },
+        })}
+
+        <div class="metric-grid" aria-label="案件概要">
+          <button class="metric-card is-link" type="button" data-action="go-tab" data-tab-target="today">
+            <span class="metric-icon" aria-hidden="true">◷</span>
+            <div class="metric-body">
+              <p class="metric-label">期限24時間以内</p>
+              <p class="metric-value">${dueSoon}<span class="metric-unit">件</span></p>
+              <p class="metric-note">早めの対応で成約率UP</p>
+            </div>
+            <span class="chevron" aria-hidden="true">›</span>
+          </button>
+          <button class="metric-card is-link" type="button" data-action="go-tab" data-tab-target="viewings">
+            <span class="metric-icon" aria-hidden="true">▤</span>
+            <div class="metric-body">
+              <p class="metric-label">申込以降</p>
+              <p class="metric-value">${Case.filter((item) => stageAtOrBeyond(item.stage, "申込準備")).length}<span class="metric-unit">件</span></p>
+              <p class="metric-note">契約まであと一歩</p>
+            </div>
+            <span class="chevron" aria-hidden="true">›</span>
+          </button>
+        </div>
+
         <section class="section" aria-labelledby="pipeline-heading">
-          <div class="section-heading"><h2 id="pipeline-heading" class="section-title">ステージ別</h2><span class="section-note">縦に進行</span></div>
-          ${stages.map(([stage, color], index) => {
+          <h2 id="pipeline-heading" class="sr-only">ステージ別の案件</h2>
+          ${stages.map(([stage, copy], index) => {
             const cases = Case.filter((item) => item.stage === stage);
-            return `<details class="stage-accordion" style="--stage-color:${color}" ${index === 1 ? "open" : ""}>
-              <summary class="stage-summary"><span class="stage-rail-mark" aria-hidden="true"></span><span class="stage-summary-main"><span class="stage-name">${stage}</span><span class="stage-count">${cases.length}件</span></span><span class="stage-toggle" aria-hidden="true">＋</span></summary>
-              <div class="stage-content">${cases.map(renderCaseCard).join("") || '<p class="small-copy">このステージの案件はありません。</p>'}</div>
+            return `<details class="card stage-accordion" ${index === 1 ? "open" : ""}>
+              <summary class="stage-summary">
+                ${statusArt(CASE_STAGE_ART[stage] || "todo", "stage-mascot")}
+                <span class="stage-summary-main"><span class="stage-name">${stage}</span><span class="stage-copy">${copy}</span></span>
+                <span class="stage-count">${cases.length}<span class="stage-count-unit">件</span></span>
+                <span class="stage-toggle" aria-hidden="true"></span>
+              </summary>
+              <div class="stage-content">${cases.map(renderCaseCard).join("") || '<p class="small-copy stage-empty">このステージの案件はありません。</p>'}</div>
             </details>`;
           }).join("")}
         </section>
@@ -1329,13 +1916,20 @@ import {
     const dueLabel = dueCalendarLabel(caseItem.dueAt);
     const dueTimestamp = Date.parse(caseItem.dueAt);
     const urgent = Number.isFinite(dueTimestamp) && dueTimestamp <= MOCK_NOW + 24 * 60 * 60 * 1_000;
-    return `<article class="case-card">
-      <div class="case-line"><p class="case-customer">${escapeHTML(customer.name)}</p><span class="status-pill ${urgent ? "urgent" : "neutral"}">${escapeHTML(dueLabel)}</span></div>
-      <p class="case-property">${escapeHTML(property.name)}</p>
-      <div class="case-next"><span class="case-next-label">次アクション</span><strong class="case-next-action">${escapeHTML(caseItem.nextAction)}</strong></div>
-      <div class="case-status-grid"><div class="case-status"><span class="status-label">書類</span><strong class="status-value">${escapeHTML(caseItem.documentStatus)}</strong></div><div class="case-status"><span class="status-label">申込状態</span><strong class="status-value">${escapeHTML(caseItem.applicationStatus)}</strong></div></div>
-      <p class="case-history">履歴：${escapeHTML(dueCalendarLabel(caseItem.updatedAt))} · 佐藤が更新</p>
-    </article>`;
+    return `<button class="case-card" type="button" data-action="open-customer" data-id="${customer.id}">
+      <span class="case-avatar" aria-hidden="true">${escapeHTML(customer.name.slice(0, 1))}</span>
+      <span class="case-main">
+        <span class="case-customer">${escapeHTML(customer.name)}</span>
+        <span class="case-property">${property ? escapeHTML(property.name) : "物件 未確定"}</span>
+        <span class="case-due ${urgent ? "is-urgent" : ""}">${escapeHTML(dueLabel)}</span>
+      </span>
+      <span class="case-detail">
+        <span class="case-fact"><span class="case-fact-icon" aria-hidden="true">✓</span><span class="case-label">次のアクション</span><span class="case-fact-value">${escapeHTML(caseItem.nextAction)}</span></span>
+        <span class="case-fact"><span class="case-fact-icon" aria-hidden="true">▤</span><span class="case-label">書類ステータス</span><span class="status-pill ${caseItem.documentStatus === "不要" ? "neutral" : "warning"}">${escapeHTML(caseItem.documentStatus)}</span></span>
+        <span class="case-fact"><span class="case-fact-icon" aria-hidden="true">✎</span><span class="case-label">申込ステータス</span><span class="status-pill ${caseItem.applicationStatus === "未申込" ? "neutral" : "info"}">${escapeHTML(caseItem.applicationStatus)}</span></span>
+      </span>
+      <span class="chevron" aria-hidden="true">›</span>
+    </button>`;
   }
 
   function openSheet(content, labelId) {
@@ -1364,12 +1958,12 @@ import {
       <header class="sheet-header"><div><p class="eyebrow">CUSTOMER DETAIL</p><h2 id="customer-detail-title" class="sheet-title">${escapeHTML(customer.name)}</h2><p class="sheet-subtitle">${escapeHTML(customer.status)} · 担当 ${escapeHTML(customer.assignedTo || "未割当")}</p></div><button class="icon-button" type="button" data-action="close-modal" aria-label="閉じる">×</button></header>
       <div class="sheet-content">
         <section class="detail-section" aria-labelledby="condition-section-title"><div class="detail-section-head"><h3 id="condition-section-title" class="detail-section-title">AI条件整理</h3><span class="mini-badge">確定 / 推定 / 未確認</span></div><ul class="condition-list">${condition.items.map((item) => `<li class="condition-item"><span class="condition-dot ${item.status}" aria-hidden="true"></span><div><p class="condition-title">${escapeHTML(item.label)} <span class="tag ${item.status === "confirmed" ? "success" : item.status === "inferred" ? "warning" : "neutral"}">${statusLabels[item.status]}</span></p><p class="condition-copy">${escapeHTML(item.value)}</p></div></li>`).join("")}</ul></section>
-        <section class="detail-section" aria-labelledby="line-summary-title"><div class="detail-section-head"><h3 id="line-summary-title" class="detail-section-title">LINE会話と要約</h3><span class="mini-badge">会話から要約</span></div><blockquote class="summary-quote">${escapeHTML(customer.lineSummary)}</blockquote><ol class="conversation-list"><li><time>09:42</time><span>顧客</span><p>ありがとうございます。日当たりも重視したいです。</p></li><li><time>09:48</time><span>営業</span><p>承知しました。仕事スペースも含めて候補を整理します。</p></li><li><time>10:05</time><span>顧客</span><p>週末の午前なら内見できます。</p></li></ol></section>
-        <section class="detail-section" aria-labelledby="liked-title"><div class="detail-section-head"><h3 id="liked-title" class="detail-section-title">Like物件</h3><span class="count-badge">${liked.length}</span></div>${liked.length ? `<ul class="liked-list">${liked.slice(0, 3).map((property) => { const candidate = candidateByIds(customer.id, property.id); return `<li class="liked-item"><span class="liked-thumb"><img src="${escapeHTML(property.imageUrl)}" alt="" loading="lazy" referrerpolicy="no-referrer" /></span><div class="person-main"><p class="person-name">${escapeHTML(property.name)}</p><p class="person-meta">${yen(property.rentYen)} · 一致率 ${clampPercent(candidate?.matchScore)}%</p></div></li>`; }).join("")}</ul>` : '<p class="small-copy">まだLikeした物件はありません。</p>'}</section>
+        <section class="detail-section" aria-labelledby="line-summary-title"><div class="detail-section-head"><h3 id="line-summary-title" class="detail-section-title">LINE会話と要約</h3><span class="mini-badge">会話から要約</span></div><blockquote class="summary-quote">${escapeHTML(customer.lineSummary)}</blockquote>${talkMessages(customer.id).length ? `<ol class="conversation-list">${talkMessages(customer.id).slice(-3).map((message) => `<li><time>${escapeHTML(message.at)}</time><span>${message.direction === "in" ? "顧客" : "営業"}</span><p>${escapeHTML(message.body)}</p></li>`).join("")}</ol>` : '<p class="small-copy">まだやり取りがありません。</p>'}<button class="ghost-button wide-button" type="button" data-action="open-talk" data-id="${customer.id}" style="margin-top:10px">トークを開いて返信する</button></section>
+        <section class="detail-section" aria-labelledby="liked-title"><div class="detail-section-head"><h3 id="liked-title" class="detail-section-title">Like物件</h3><span class="count-badge">${liked.length}</span></div>${liked.length ? `<ul class="liked-list">${liked.slice(0, 3).map((property) => { const candidate = candidateByIds(customer.id, property.id); return `<li class="liked-item"><span class="liked-thumb"><img src="${escapeHTML(property.imageUrl)}" alt="" loading="lazy" referrerpolicy="no-referrer" /></span><div class="person-main"><p class="person-name">${escapeHTML(property.name)}</p><p class="person-meta">${yen(property.rentYen)} · マッチ度 ${clampPercent(candidate?.matchScore)}%</p></div></li>`; }).join("")}</ul>` : '<p class="small-copy">まだLikeした物件はありません。</p>'}</section>
         <section class="detail-section" aria-labelledby="progress-title"><div class="detail-section-head"><h3 id="progress-title" class="detail-section-title">進捗</h3><span class="stage-pill">${escapeHTML(customer.status)}</span></div><div class="progress-track" aria-label="進捗 ${clampPercent(customer.progress)}%"><div class="progress-value" style="width:${clampPercent(customer.progress)}%"></div></div><div class="progress-labels"><span>初回対応</span><span>物件提案</span><span>内見</span><span>申込</span><span>契約</span></div></section>
       </div>
       <footer class="sheet-footer">
-        ${customer.unassigned ? `<button class="ghost-button" type="button" data-action="claim-customer" data-id="${customer.id}">担当になる</button>` : `<button class="ghost-button" type="button" data-action="close-modal">閉じる</button>`}
+        ${customer.unassigned ? `<button class="ghost-button" type="button" data-action="claim-customer" data-id="${customer.id}">担当になる</button>` : `<button class="ghost-button" type="button" data-action="open-talk" data-id="${customer.id}">トークを開く</button>`}
         <button class="primary-button" type="button" data-action="select-customer" data-id="${customer.id}">${state.selectedCustomerId === customer.id ? "選択中 · 物件を見る" : "この顧客で物件を見る"}</button>
       </footer>`;
     openSheet(content, "customer-detail-title");
@@ -1501,6 +2095,7 @@ import {
    * デッキの操作。横は判断せず前後の候補へ送るだけ、下は候補へ保存する。
    * Skipは判断が消えると取り返しにくいので、ジェスチャーではなくトレイのボタンに置く。
    */
+  /** デッキの操作。横スワイプで前後の候補へ送る。判断はカード内のボタンで行う。 */
   function attachSwipeInteractions() {
     const stage = appView.querySelector("[data-deck-stage]");
     const card = stage?.querySelector(".top-card[data-property-card]");
@@ -1515,96 +2110,52 @@ import {
       }
     }
 
-    const cards = [...stage.querySelectorAll("[data-property-card]")];
     let gesture = null;
 
     const resetStage = () => {
       stage.classList.remove("is-dragging");
-      cards.forEach((item) => {
-        item.style.removeProperty("--drag-x");
-        item.style.removeProperty("--drag-y");
-        item.style.removeProperty("--drag-scale");
-      });
-      const badge = card.querySelector(".swipe-badge.save");
-      if (badge) badge.style.opacity = "0";
-      appView.querySelector("[data-deck-tray]")?.classList.remove("is-target");
+      card.style.removeProperty("--drag-x");
     };
 
     card.addEventListener("pointerdown", (event) => {
       if (!event.isPrimary || gesture || runtime.decisionPending) return;
       if (event.pointerType === "mouse" && event.button !== 0) return;
-      gesture = {
-        pointerId: event.pointerId,
-        startX: event.clientX,
-        startY: event.clientY,
-        startTime: event.timeStamp,
-        dx: 0,
-        dy: 0,
-        axis: null,
-      };
+      gesture = { pointerId: event.pointerId, startX: event.clientX, startY: event.clientY, startTime: event.timeStamp, dx: 0, axis: null };
     });
 
     card.addEventListener("pointermove", (event) => {
       if (!gesture || gesture.pointerId !== event.pointerId) return;
       const dx = event.clientX - gesture.startX;
       const dy = event.clientY - gesture.startY;
-      const absX = Math.abs(dx);
-      const absY = Math.abs(dy);
       if (!gesture.axis) {
-        if (Math.max(absX, absY) < 10) return;
-        gesture.axis = absX >= absY ? "horizontal" : "vertical";
-        card.setPointerCapture?.(event.pointerId);
-        stage.classList.add("is-dragging");
+        if (Math.max(Math.abs(dx), Math.abs(dy)) < 10) return;
+        // 縦は画面のスクロールに渡す
+        gesture.axis = Math.abs(dx) > Math.abs(dy) * 1.2 ? "horizontal" : "vertical";
+        if (gesture.axis === "horizontal") {
+          card.setPointerCapture?.(event.pointerId);
+          stage.classList.add("is-dragging");
+        }
       }
+      if (gesture.axis !== "horizontal") return;
       event.preventDefault();
       gesture.dx = dx;
-      gesture.dy = dy;
-      const width = Math.max(card.getBoundingClientRect().width, 1);
-      const height = Math.max(card.getBoundingClientRect().height, 1);
-      if (gesture.axis === "horizontal") {
-        cards.forEach((item) => item.style.setProperty("--drag-x", `${dx}px`));
-        return;
-      }
-      // 上方向へは動かさない（保存の取り消しに見えるため）
-      const pulled = Math.max(0, dy);
-      const progress = Math.min(1, pulled / (height * 0.22));
-      card.style.setProperty("--drag-y", `${pulled}px`);
-      card.style.setProperty("--drag-scale", String(1 - progress * 0.06));
-      const badge = card.querySelector(".swipe-badge.save");
-      if (badge) badge.style.opacity = String(progress);
-      appView.querySelector("[data-deck-tray]")?.classList.toggle("is-target", progress >= 1);
-      void width;
+      card.style.setProperty("--drag-x", `${dx}px`);
     });
 
     const finish = (event) => {
       if (!gesture || gesture.pointerId !== event.pointerId) return;
       const current = gesture;
       gesture = null;
-      if (!current.axis) {
+      if (current.axis !== "horizontal") {
         resetStage();
         return;
       }
       runtime.suppressCardClick = true;
       const rect = card.getBoundingClientRect();
       const elapsed = Math.max(16, event.timeStamp - current.startTime);
-      if (current.axis === "horizontal") {
-        const passed = Math.abs(current.dx) >= rect.width * 0.24 || (Math.abs(current.dx) / elapsed >= 0.5 && Math.abs(current.dx) >= 24);
-        resetStage();
-        if (passed) moveDeckCursor(current.dx < 0 ? 1 : -1);
-        return;
-      }
-      const passed = current.dy >= rect.height * 0.22 || (current.dy / elapsed >= 0.5 && current.dy >= 40);
-      if (!passed) {
-        resetStage();
-        return;
-      }
-      if (card.dataset.listingStatus === "募集終了") {
-        resetStage();
-        showToast("募集終了のため候補へ保存できません");
-        return;
-      }
+      const passed = Math.abs(current.dx) >= rect.width * 0.24 || (Math.abs(current.dx) / elapsed >= 0.5 && Math.abs(current.dx) >= 24);
       resetStage();
-      animatePropertyDecision("liked", card.dataset.propertyId);
+      if (passed) moveDeckCursor(current.dx < 0 ? 1 : -1);
     };
 
     card.addEventListener("pointerup", finish);
@@ -1726,6 +2277,75 @@ import {
       renderApp({ focusSelector: `[data-action="complete-today-action"][data-id="${CSS.escape(id)}"]` });
       showToast(runtime.completedTodayActions.has(id) ? "完了にしました" : "未完了に戻しました");
     }
+    if (action === "deck-sort") {
+      const sort = control.dataset.sort;
+      if (DECK_SORTS.some((item) => item.id === sort) && runtime.deckSort !== sort) {
+        runtime.deckSort = sort;
+        runtime.deckCursor = 0;
+        renderApp({ focusSelector: `[data-action="deck-sort"][data-sort="${CSS.escape(sort)}"]` });
+        showToast(`${DECK_SORTS.find((item) => item.id === sort).label}に並び替えました`);
+      }
+    }
+    if (action === "open-talk") openTalk(id);
+    if (action === "talk-insert-draft") {
+      const customer = customerById(id);
+      const input = modalRoot.querySelector("#talk-body");
+      if (customer && input) {
+        runtime.talkDraft = replyDraftFor(customer);
+        input.value = runtime.talkDraft;
+        input.focus();
+        showToast("AI下書きを入れました。送信前に必ず確認してください");
+      }
+    }
+    if (action === "talk-mock-receive") {
+      const messages = talkMessages(id);
+      const sample = INCOMING_SAMPLES[runtime.incomingCount % INCOMING_SAMPLES.length];
+      runtime.incomingCount += 1;
+      messages.push({
+        id: `${id}-in-${messages.length + 1}`,
+        customerId: id,
+        direction: "in",
+        at: "たった今",
+        body: sample,
+        status: "received",
+      });
+      runtime.talkDraft = modalRoot.querySelector("#talk-body")?.value || "";
+      openTalk(id);
+      showToast("顧客からの受信を再現しました（Webhook相当）");
+    }
+    if (action === "open-customer-filters") openCustomerFilters();
+    if (action === "customer-owner") {
+      runtime.customerOwner = control.dataset.owner;
+      renderApp();
+      openCustomerFilters();
+    }
+    if (action === "open-deck-filters") openDeckFilters();
+    if (action === "toggle-deck-filter") {
+      const key = control.dataset.filter;
+      if (key in runtime.deckFilters) {
+        runtime.deckFilters[key] = !runtime.deckFilters[key];
+        runtime.deckCursor = 0;
+        renderApp();
+        openDeckFilters();
+      }
+    }
+    if (action === "clear-deck-filters") {
+      Object.keys(runtime.deckFilters).forEach((key) => {
+        runtime.deckFilters[key] = false;
+      });
+      runtime.deckCursor = 0;
+      closeModal();
+      renderApp();
+      showToast("絞り込みを外しました");
+    }
+    if (action === "toggle-deck-menu") {
+      runtime.deckMenuOpen = !runtime.deckMenuOpen;
+      renderApp({ focusSelector: ".deck-fab" });
+    }
+    if (action === "go-tab") {
+      runtime.deckMenuOpen = false;
+      setActiveTab(control.dataset.tabTarget);
+    }
     if (action === "open-property-detail") {
       // ドラッグの直後に発火するclickは詳細を開かない
       if (runtime.suppressCardClick) runtime.suppressCardClick = false;
@@ -1752,6 +2372,10 @@ import {
     }
     if (action === "retry-property-search") {
       showToast("駅徒歩・築年数の緩和案です。条件編集はITANDI接続工程で有効になります");
+    }
+    if (action === "calendar-step") {
+      runtime.calendarOffset += Number(control.dataset.step) || 0;
+      renderApp({ focusSelector: `[data-action="calendar-step"][data-step="${control.dataset.step}"]` });
     }
     if (action === "viewing-range") {
       runtime.viewingRange = range;
@@ -1836,6 +2460,41 @@ import {
       renderApp({ focusSelector: '[data-action="open-reply"]' });
       showToast("確認済みの返信を送信しました（モック）");
     }
+    if (event.target.id === "talk-form") {
+      if (runtime.replyPending) return;
+      const customerId = event.target.dataset.id;
+      const customer = customerById(customerId);
+      const body = String(new FormData(event.target).get("body") || "").trim();
+      if (!customer) return;
+      if (!body) {
+        showToast("返信本文を入力してください");
+        event.target.elements.body?.focus();
+        return;
+      }
+      if (containsInternalFragment(body, INTERNAL_REPLY_FRAGMENTS)) {
+        showToast("鍵・AD・管理会社メモなどの社内限定情報を削除してください");
+        event.target.elements.body?.focus();
+        return;
+      }
+      // 送信は「営業が確認した本文」と一致したときだけ通す（承認記録＋本文指紋）
+      const messages = talkMessages(customerId);
+      const draftId = `talk-${customerId}-${messages.length + 1}`;
+      runtime.replyPending = true;
+      try {
+        const approval = createMockReplyApproval({ draftId, body, approvedBy: "employee:sato" });
+        const dto = createApprovedReplyDTO({ customerId, draftId, body, approval });
+        await replyGateway.sendApprovedReply(dto);
+      } catch (error) {
+        runtime.replyPending = false;
+        showToast(error.message || "返信内容を確認してください");
+        return;
+      }
+      runtime.replyPending = false;
+      messages.push({ id: draftId, customerId, direction: "out", at: "たった今", body, status: "sent" });
+      runtime.talkDraft = "";
+      openTalk(customerId);
+      showToast("確認済みの返信を送信しました（モック）");
+    }
     if (event.target.id === "feedback-form") {
       const viewing = Viewing.find((item) => item.id === event.target.dataset.id);
       if (!viewing) return;
@@ -1857,6 +2516,12 @@ import {
     if (event.key === "Escape" && modalRoot.innerHTML) {
       event.preventDefault();
       closeModal();
+      return;
+    }
+    if (event.key === "Escape" && runtime.deckMenuOpen) {
+      event.preventDefault();
+      runtime.deckMenuOpen = false;
+      renderApp({ focusSelector: ".deck-fab" });
       return;
     }
     if (event.key !== "Tab" || !modalRoot.innerHTML) return;

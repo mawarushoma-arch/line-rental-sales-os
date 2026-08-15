@@ -4,6 +4,7 @@ import { createServer } from "node:http";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { MOCK_BOOTSTRAP_PAYLOAD, MOCK_HEALTH_PAYLOAD } from "../public/model-contract.mjs";
+import { handleLineRequest } from "../worker/line-bridge.mjs";
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const publicRoot = path.join(projectRoot, "public");
@@ -54,6 +55,81 @@ function sendJson(response, statusCode, payload, method = "GET") {
   response.end(method === "HEAD" ? undefined : body);
 }
 
+/**
+ * ローカル確認用のKV代わり。プロセスを落とすと消えるので、残す必要のある確認は本番Workerで行う。
+ * KVと同じく、キーはバイト順で並べる。
+ */
+function createMemoryStore() {
+  const entries = new Map();
+  const alive = (entry) => !entry.expiresAt || entry.expiresAt > Date.now();
+  return {
+    async get(key) {
+      const entry = entries.get(key);
+      if (!entry) return null;
+      if (!alive(entry)) {
+        entries.delete(key);
+        return null;
+      }
+      return entry.value;
+    },
+    async put(key, value, options = {}) {
+      const ttl = Number(options.expirationTtl) || 0;
+      entries.set(key, { value: String(value), expiresAt: ttl ? Date.now() + ttl * 1000 : 0 });
+    },
+    async delete(key) {
+      entries.delete(key);
+    },
+    async list({ prefix = "", limit = 1000 } = {}) {
+      const keys = [...entries.entries()]
+        .filter(([name, entry]) => name.startsWith(prefix) && alive(entry))
+        .map(([name]) => ({ name }))
+        .sort((left, right) => (left.name < right.name ? -1 : left.name > right.name ? 1 : 0))
+        .slice(0, limit);
+      return { keys, list_complete: true };
+    },
+  };
+}
+
+// `.dev.vars` があれば読む。無くても起動はする（LINE経路だけが未設定として断る）
+try {
+  process.loadEnvFile(path.join(projectRoot, ".dev.vars"));
+} catch {
+  // 未作成なら何もしない
+}
+
+const lineEnv = {
+  LINE_CHANNEL_SECRET: process.env.LINE_CHANNEL_SECRET || "",
+  LINE_CHANNEL_ACCESS_TOKEN: process.env.LINE_CHANNEL_ACCESS_TOKEN || "",
+  ROOM_PILOT_LINE_KEY: process.env.ROOM_PILOT_LINE_KEY || "",
+  LINE_STORE: createMemoryStore(),
+};
+
+async function toWebRequest(request) {
+  const url = new URL(request.url || "/", `http://${request.headers.host || "localhost"}`);
+  const headers = new Headers();
+  for (const [name, value] of Object.entries(request.headers)) {
+    if (typeof value === "string") headers.set(name, value);
+  }
+  let body;
+  if (request.method !== "GET" && request.method !== "HEAD") {
+    const chunks = [];
+    for await (const chunk of request) chunks.push(chunk);
+    body = Buffer.concat(chunks);
+  }
+  return new Request(url, { method: request.method, headers, body });
+}
+
+async function sendWebResponse(response, webResponse) {
+  const buffer = Buffer.from(await webResponse.arrayBuffer());
+  const headers = {};
+  webResponse.headers.forEach((value, name) => {
+    headers[name] = value;
+  });
+  headers["content-length"] = buffer.byteLength;
+  response.writeHead(webResponse.status, headers);
+  response.end(buffer);
+}
+
 function safeFilePath(requestUrl) {
   let pathname;
   try {
@@ -71,12 +147,26 @@ function safeFilePath(requestUrl) {
 }
 
 const server = createServer(async (request, response) => {
+  const requestPath = new URL(request.url || "/", "http://localhost").pathname;
+
+  if (requestPath === "/line/webhook" || requestPath.startsWith("/api/line/")) {
+    try {
+      const lineResponse = await handleLineRequest(await toWebRequest(request), lineEnv);
+      if (lineResponse) {
+        await sendWebResponse(response, lineResponse);
+        return;
+      }
+    } catch (error) {
+      sendText(response, 500, `LINE bridge error: ${error.message}`);
+      return;
+    }
+  }
+
   if (request.method !== "GET" && request.method !== "HEAD") {
     sendText(response, 405, "Method Not Allowed", { allow: "GET, HEAD" });
     return;
   }
 
-  const requestPath = new URL(request.url || "/", "http://localhost").pathname;
   if (requestPath === "/api/health") {
     sendJson(response, 200, MOCK_HEALTH_PAYLOAD, request.method);
     return;
