@@ -67,6 +67,18 @@ curl -X PUT https://api.line.me/v2/bot/channel/webhook/endpoint \
 
 ローカルで試す場合は `.dev.vars`（gitignore済み）に同じ4項目を書くと `npm run dev` でも同じ経路が動く。ただし保存はプロセス内メモリで、Webhookは外部から届かない。
 
+### AIによる要約と条件整理
+
+`POST /api/line/analyze` が、保存済みの会話から**要約**と**希望条件**を作る。モデルはCloudflare Workers AIの `@cf/meta/llama-3.3-70b-instruct-fp8-fast`（binding `AI`）で、**会話はCloudflareの外へ出ない**。追加のAPIキーは要らない。
+
+`docs/architecture.md` 4章の約束をここで守っている。
+
+- AIが埋めた値は必ず `inferred`（推定）。`confirmed` へ昇格させる経路はない。
+- **各項目に、根拠になった顧客の発言をそのまま `quote` として持たせる。** 引用が無い値は採用せず `unknown` にする。値だけそれらしく埋まる状態を作らない。
+- 読み取れない項目は「まだ確認できていません」として残し、空欄を推測で埋めない。
+
+構造化出力（`response_format: json_schema`）を使うため、返答は文字列ではなく**オブジェクト**で返る。指定が効かない場合に備えて文字列のJSON抽出も残してある。所要はおよそ5〜10秒。
+
 ### LIFF（LINEアプリ内で全画面表示）
 
 LIFFアプリは**LINEログインチャネル**にしか作れない。Messaging APIチャネルの access token で `POST /liff/v1/apps` を叩くと `Channel must have any of following Application Types` で断られる。

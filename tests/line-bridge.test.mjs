@@ -365,6 +365,108 @@ test("応答トークンが切れていればプッシュ送信へ回す", async
   );
 });
 
+function analyzeRequest(threadId) {
+  return new Request("https://example.com/api/line/analyze", {
+    method: "POST",
+    headers: { "x-room-pilot-key": APP_KEY, "content-type": "application/json" },
+    body: JSON.stringify({ threadId }),
+  });
+}
+
+/** AIの返答を差し替えられるスタブ。文字列でもオブジェクトでもそのまま渡す */
+function aiEnv(reply) {
+  const env = createEnv();
+  env.AI = { run: async () => ({ response: reply }) };
+  return env;
+}
+
+test("AIが未接続なら整理を断る", async () => {
+  const env = createEnv();
+  const threadId = await seedThread(env);
+  const response = await handleLineRequest(analyzeRequest(threadId), env);
+  assert.equal(response.status, 503);
+});
+
+test("顧客からの発言がなければ整理しない", async () => {
+  const env = aiEnv({ summary: "x" });
+  const threadId = await threadIdFor(SECRET, USER_ID);
+  await env.LINE_STORE.put(`alias:${threadId}`, JSON.stringify({ userId: USER_ID }));
+  const response = await handleLineRequest(analyzeRequest(threadId), env);
+  assert.equal(response.status, 409);
+});
+
+test("会話から要約と条件を作り、保存する", async () => {
+  const env = aiEnv({
+    summary: "中目黒で1LDKを探している。予算は管理費込み20万円まで。",
+    conditions: {
+      area: { value: "中目黒", quote: "中目黒あたりで探しています" },
+      budget: { value: "管理費込み20万円まで", quote: "管理費込みで20万までにしたいです" },
+      layout: { value: null, quote: null },
+      moveIn: { value: null, quote: null },
+      mustHave: { value: null, quote: null },
+      concern: { value: null, quote: null },
+    },
+    questions: ["入居希望日はいつ頃ですか", "駅からの徒歩は何分まで許容できますか"],
+  });
+  const threadId = await seedThread(env);
+
+  const response = await handleLineRequest(analyzeRequest(threadId), env);
+  assert.equal(response.status, 200);
+  const { analysis } = await response.json();
+
+  assert.match(analysis.summary, /中目黒/);
+  const area = analysis.items.find((item) => item.label === "希望エリア");
+  assert.equal(area.status, "inferred", "AIが埋めた値は推定として扱う");
+  assert.equal(area.quote, "中目黒あたりで探しています");
+  const moveIn = analysis.items.find((item) => item.label === "入居希望日");
+  assert.equal(moveIn.status, "unknown");
+  assert.equal(analysis.questions.length, 2);
+
+  const stored = JSON.parse(await env.LINE_STORE.get(`analysis:${threadId}`));
+  assert.equal(stored.summary, analysis.summary);
+});
+
+test("根拠の引用がない項目は推定へ昇格させない", async () => {
+  const env = aiEnv({
+    summary: "要約",
+    conditions: {
+      area: { value: "中目黒", quote: null },
+      budget: { value: "20万円", quote: "" },
+      layout: { value: null, quote: null },
+      moveIn: { value: null, quote: null },
+      mustHave: { value: null, quote: null },
+      concern: { value: null, quote: null },
+    },
+  });
+  const threadId = await seedThread(env);
+  const { analysis } = await (await handleLineRequest(analyzeRequest(threadId), env)).json();
+  assert.ok(
+    analysis.items.every((item) => item.status === "unknown"),
+    "引用がないのに値だけ埋まっているものを採用してはいけない",
+  );
+});
+
+test("AIが前置きを付けて返してもJSONを拾う", async () => {
+  const env = aiEnv(
+    'はい、整理しました。\n```json\n{"summary":"前置き付きでも読める","conditions":{},"questions":[]}\n```',
+  );
+  const threadId = await seedThread(env);
+  const { analysis } = await (await handleLineRequest(analyzeRequest(threadId), env)).json();
+  assert.equal(analysis.summary, "前置き付きでも読める");
+});
+
+test("構造化出力でオブジェクトが返ってもそのまま使う", async () => {
+  const env = aiEnv({
+    summary: "オブジェクトで返ってきた要約",
+    conditions: { area: { value: "恵比寿", quote: "恵比寿がいいです" } },
+    questions: [],
+  });
+  const threadId = await seedThread(env);
+  const { analysis } = await (await handleLineRequest(analyzeRequest(threadId), env)).json();
+  assert.equal(analysis.summary, "オブジェクトで返ってきた要約");
+  assert.equal(analysis.items.find((item) => item.label === "希望エリア").value, "恵比寿");
+});
+
 test("送信失敗は成功にせず、failed として残す", async () => {
   const env = createEnv();
   const threadId = await seedThread(env, { replyToken: "" });

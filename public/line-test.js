@@ -27,6 +27,8 @@ const state = {
   draft: "",
   pending: null,
   sending: false,
+  analysis: null,
+  analyzing: false,
   loading: true,
   error: "",
 };
@@ -128,7 +130,27 @@ async function loadMessages({ reset = false } = {}) {
   }
   state.cursor = payload.cursor || state.cursor;
   if (payload.thread) state.activeThread = payload.thread;
+  if (payload.analysis !== undefined) state.analysis = payload.analysis;
   return incoming.length;
+}
+
+async function runAnalysis() {
+  if (!state.activeThreadId || state.analyzing) return;
+  state.analyzing = true;
+  render();
+  try {
+    const result = await callApi("/api/line/analyze", {
+      method: "POST",
+      body: JSON.stringify({ threadId: state.activeThreadId }),
+    });
+    state.analysis = result.analysis;
+    toast(`${result.analysis.messageCount}件のやり取りから整理しました`);
+  } catch (error) {
+    toast(error.message, "bad");
+  } finally {
+    state.analyzing = false;
+    render();
+  }
 }
 
 /* ------------------------------------------------------------------ 描画 */
@@ -299,6 +321,70 @@ function composerView() {
     </section>`;
 }
 
+const STATUS_LABEL = { inferred: "推定", unknown: "未確認", confirmed: "確認済み" };
+
+/**
+ * 会話から作った要約と条件。AIが埋めた値は必ず「推定」として出し、
+ * 根拠になった顧客の発言を並べて、営業が自分で裏を取れるようにする。
+ */
+function analysisView() {
+  const analysis = state.analysis;
+  const button = `
+    <button class="line-button line-button-ghost" type="button" data-action="analyze" ${state.analyzing ? "disabled" : ""}>
+      ${state.analyzing ? "整理しています…" : analysis ? "最新のやり取りで作り直す" : "AIで要約と条件を整理"}
+    </button>`;
+
+  if (!analysis) {
+    return `<section class="line-analysis">${button}</section>`;
+  }
+
+  const known = analysis.items.filter((item) => item.status !== "unknown");
+  const unknown = analysis.items.filter((item) => item.status === "unknown");
+
+  return `
+    <section class="line-analysis">
+      <div class="line-analysis-head">
+        <h3>会話の要約</h3>
+        <span class="line-analysis-meta">${escapeHTML(String(analysis.messageCount))}件から・${escapeHTML(formatTime(analysis.at))}</span>
+      </div>
+      <p class="line-analysis-summary">${escapeHTML(analysis.summary || "要約を作れませんでした。")}</p>
+
+      <h3>読み取れた条件</h3>
+      ${
+        known.length
+          ? `<dl class="line-conditions">
+        ${known
+          .map(
+            (item) => `
+          <div class="line-condition">
+            <dt>${escapeHTML(item.label)}<span class="line-status" data-status="${escapeHTML(item.status)}">${escapeHTML(STATUS_LABEL[item.status] || item.status)}</span></dt>
+            <dd>${escapeHTML(item.value)}</dd>
+            ${item.quote ? `<dd class="line-quote">「${escapeHTML(item.quote)}」</dd>` : ""}
+          </div>`,
+          )
+          .join("")}
+      </dl>`
+          : '<p class="line-analysis-summary">まだ条件を読み取れる発言がありません。</p>'
+      }
+
+      ${
+        unknown.length
+          ? `<p class="line-unknown">未確認：${unknown.map((item) => escapeHTML(item.label)).join("・")}</p>`
+          : ""
+      }
+
+      ${
+        analysis.questions?.length
+          ? `<h3>次に聞くとよいこと</h3>
+        <ul class="line-questions">${analysis.questions.map((question) => `<li>${escapeHTML(question)}</li>`).join("")}</ul>`
+          : ""
+      }
+
+      <p class="line-analysis-note">AIの推定です。金額・日付・空室は必ず裏を取ってから提案してください。</p>
+      ${button}
+    </section>`;
+}
+
 function talkView() {
   const thread = state.activeThread;
   const log = state.messages.length
@@ -328,6 +414,7 @@ function talkView() {
         </span>
       </div>
       <ol class="line-talk-log" id="talk-log">${log}</ol>
+      ${analysisView()}
       ${thread?.blocked ? "" : composerView()}
     </div>`;
 }
@@ -484,6 +571,7 @@ document.addEventListener("click", (event) => {
     state.activeThread = state.threads.find((row) => row.threadId === thread) || null;
     state.pending = null;
     state.draft = "";
+    state.analysis = null;
     refreshAll({ resetMessages: true });
   }
   if (action === "close-thread") {
@@ -492,6 +580,7 @@ document.addEventListener("click", (event) => {
     state.messages = [];
     state.cursor = "";
     state.pending = null;
+    state.analysis = null;
     render();
   }
   if (action === "cancel-send") {
@@ -499,6 +588,7 @@ document.addEventListener("click", (event) => {
     render();
   }
   if (action === "confirm-send") sendPending();
+  if (action === "analyze") runAnalysis();
 });
 
 document.addEventListener("input", (event) => {

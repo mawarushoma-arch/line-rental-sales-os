@@ -452,6 +452,7 @@ async function handleMessages(request, env) {
     messages,
     cursor: names.length ? names[names.length - 1] : since,
     thread: thread ? publicThread(thread) : null,
+    analysis: since ? undefined : await readJson(store, `analysis:${threadId}`),
   });
 }
 
@@ -583,6 +584,208 @@ async function handleSend(request, env) {
   return json(success);
 }
 
+/* ------------------------------------------------------------------ AIによる整理 */
+
+const ANALYSIS_MODEL = "@cf/meta/llama-3.3-70b-instruct-fp8-fast";
+const ANALYSIS_MAX_MESSAGES = 40;
+const ANALYSIS_MAX_CHARS = 6_000;
+
+/** 画面に出す順。SearchConditionのlabelと揃えている */
+const ANALYSIS_FIELDS = [
+  ["area", "希望エリア"],
+  ["budget", "賃料上限"],
+  ["layout", "間取り"],
+  ["moveIn", "入居希望日"],
+  ["mustHave", "譲れない条件"],
+  ["concern", "懸念・注意点"],
+];
+
+/**
+ * 構造化出力の型。null を許すと実装差で弾かれることがあるので、
+ * 読み取れない場合は空文字で返させ、こちら側で未確認として扱う。
+ */
+const ANALYSIS_SCHEMA = {
+  type: "object",
+  properties: {
+    summary: { type: "string" },
+    conditions: {
+      type: "object",
+      properties: Object.fromEntries(
+        ANALYSIS_FIELDS.map(([key]) => [
+          key,
+          {
+            type: "object",
+            properties: { value: { type: "string" }, quote: { type: "string" } },
+            required: ["value", "quote"],
+          },
+        ]),
+      ),
+      required: ANALYSIS_FIELDS.map(([key]) => key),
+    },
+    questions: { type: "array", items: { type: "string" } },
+  },
+  required: ["summary", "conditions", "questions"],
+};
+
+const ANALYSIS_SYSTEM = [
+  "あなたは日本の賃貸仲介営業を補助するアシスタントです。",
+  "顧客とのLINE会話から、営業が状況を把握するための要約と、希望条件の整理を作ります。",
+  "",
+  "厳守すること:",
+  "- 会話に書かれていないことを推測で補わない。読み取れない項目は value と quote を空文字にする。",
+  "- 各項目には、根拠になった顧客の発言を quote にそのまま入れる。言い換えたり要約したりしない。",
+  "- 営業側の発言は根拠にしない。顧客の発言だけを根拠にする。",
+  "- 金額や日付を勝手に丸めたり、範囲を広げたりしない。",
+  "- 出力はJSONのみ。前置きも説明も付けない。",
+].join("\n");
+
+function buildTranscript(messages) {
+  const recent = messages.slice(-ANALYSIS_MAX_MESSAGES);
+  const lines = recent.map(
+    (message) => `${message.direction === "in" ? "顧客" : "営業"}: ${String(message.body || "").slice(0, 500)}`,
+  );
+  let transcript = lines.join("\n");
+  if (transcript.length > ANALYSIS_MAX_CHARS) transcript = transcript.slice(-ANALYSIS_MAX_CHARS);
+  return { transcript, used: recent.length };
+}
+
+/** モデルが前後に文章を付けても拾えるようにする */
+function parseJsonLoosely(text) {
+  const raw = String(text || "");
+  try {
+    return JSON.parse(raw);
+  } catch {
+    // 続けて括弧の範囲を探す
+  }
+  const start = raw.indexOf("{");
+  const end = raw.lastIndexOf("}");
+  if (start === -1 || end <= start) return null;
+  try {
+    return JSON.parse(raw.slice(start, end + 1));
+  } catch {
+    return null;
+  }
+}
+
+function cleanText(value, limit = 400) {
+  return String(value ?? "").replace(/\s+/g, " ").trim().slice(0, limit);
+}
+
+/**
+ * AIが埋めた条件を、画面が扱う形（label / value / status）へ落とす。
+ * 根拠の引用が無いものは推定として扱わず、未確認のままにする。
+ */
+function toConditionItems(parsed) {
+  const source = parsed?.conditions && typeof parsed.conditions === "object" ? parsed.conditions : {};
+  return ANALYSIS_FIELDS.map(([key, label]) => {
+    const entry = source[key];
+    const value = cleanText(entry?.value, 120);
+    const quote = cleanText(entry?.quote, 200);
+    if (!value || value === "null" || !quote) {
+      return { label, value: "まだ確認できていません", status: "unknown", quote: "" };
+    }
+    return { label, value, status: "inferred", quote };
+  });
+}
+
+async function handleAnalyze(request, env) {
+  const store = env.LINE_STORE;
+  if (!env.AI || typeof env.AI.run !== "function") {
+    return json({ error: "NOT_CONFIGURED", message: "AIが接続されていません" }, 503);
+  }
+
+  let payload;
+  try {
+    payload = await request.json();
+  } catch {
+    return json({ error: "BAD_BODY", message: "本文を読み取れません" }, 400);
+  }
+
+  const threadId = String(payload.threadId || "");
+  if (!/^t_[A-Za-z0-9_-]{1,40}$/.test(threadId)) {
+    return json({ error: "INVALID_THREAD", message: "スレッドの指定が不正です" }, 400);
+  }
+
+  const listing = await store.list({ prefix: `msg:${threadId}:`, limit: 1000 });
+  const messages = [];
+  for (const key of listing.keys.map((entry) => entry.name).sort()) {
+    const record = await readJson(store, key);
+    if (record) messages.push(record);
+  }
+  const inbound = messages.filter((message) => message.direction === "in");
+  if (!inbound.length) {
+    return json({ error: "NO_MESSAGES", message: "顧客からのメッセージがまだありません" }, 409);
+  }
+
+  const { transcript, used } = buildTranscript(messages);
+  let raw;
+  try {
+    const result = await env.AI.run(ANALYSIS_MODEL, {
+      messages: [
+        { role: "system", content: ANALYSIS_SYSTEM },
+        {
+          role: "user",
+          content: [
+            "次のLINE会話を整理してください。",
+            "",
+            "```",
+            transcript,
+            "```",
+            "",
+            "次の形のJSONだけを返してください。読み取れない項目は value と quote を空文字にします。",
+            JSON.stringify({
+              summary: "営業が状況を把握できる3文以内の日本語",
+              conditions: Object.fromEntries(
+                ANALYSIS_FIELDS.map(([key, label]) => [key, { value: `${label}（読み取れなければ空文字）`, quote: "根拠になった顧客の発言" }]),
+              ),
+              questions: ["未確認を埋めるために次に聞くとよい質問（最大3つ）"],
+            }),
+          ].join("\n"),
+        },
+      ],
+      max_tokens: 900,
+      temperature: 0.1,
+      response_format: { type: "json_schema", json_schema: ANALYSIS_SCHEMA },
+    });
+    // 構造化出力を指定するとオブジェクトで返り、指定が効かないときは文字列で返る
+    raw = typeof result === "string" ? result : result?.response;
+  } catch (error) {
+    console.error("AI.run failed", String(error?.stack || error));
+    return json({ error: "AI_FAILED", message: "AIの呼び出しに失敗しました" }, 502);
+  }
+
+  const parsed = raw && typeof raw === "object" ? raw : parseJsonLoosely(raw);
+  if (!parsed) {
+    return json(
+      {
+        error: "AI_FORMAT",
+        message: "AIの返答を読み取れませんでした。もう一度お試しください",
+        detail: cleanText(typeof raw === "string" ? raw : JSON.stringify(raw), 300),
+      },
+      502,
+    );
+  }
+
+  const analysis = {
+    threadId,
+    summary: cleanText(parsed.summary, 400),
+    items: toConditionItems(parsed),
+    questions: Array.isArray(parsed.questions)
+      ? parsed.questions.map((question) => cleanText(question, 120)).filter(Boolean).slice(0, 3)
+      : [],
+    messageCount: used,
+    model: ANALYSIS_MODEL,
+    at: nowIso(),
+  };
+
+  try {
+    await store.put(`analysis:${threadId}`, JSON.stringify(analysis), { expirationTtl: MESSAGE_TTL_SECONDS });
+  } catch {
+    // 保存できなくても、今回の結果は返す
+  }
+  return json({ ok: true, analysis });
+}
+
 /* ------------------------------------------------------------------ ルーター */
 
 /** LINE関連のパスだけを引き受ける。担当外は null を返して既存の配信へ渡す */
@@ -612,6 +815,7 @@ export async function handleLineRequest(request, env) {
   if (pathname === "/api/line/threads" && request.method === "GET") return handleThreads(env);
   if (pathname === "/api/line/messages" && request.method === "GET") return handleMessages(request, env);
   if (pathname === "/api/line/send" && request.method === "POST") return handleSend(request, env);
+  if (pathname === "/api/line/analyze" && request.method === "POST") return handleAnalyze(request, env);
 
   return json({ error: "NOT_FOUND" }, 404);
 }
